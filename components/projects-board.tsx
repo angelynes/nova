@@ -1,8 +1,8 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type { Project, Task, TaskStatus } from "@/lib/nova/types";
-import { formatShortDate, taskIsCompletedOn } from "@/lib/nova/date";
+import { formatShortDate } from "@/lib/nova/date";
 import { useNova } from "./nova-provider";
 import { ProjectModal } from "./project-modal";
 import { TaskModal } from "./task-modal";
@@ -14,19 +14,32 @@ const columns: { status: TaskStatus; label: string }[] = [
 ];
 
 export function ProjectsBoard() {
-  const { state, hydrated, setTaskStatus } = useNova();
+  const { state, hydrated, setTaskStatus, updateProject } = useNova();
   const activeProjects = state.projects.filter((project) => project.status === "active");
+  const archivedProjects = state.projects.filter((project) => project.status === "archived");
   const [selectedProjectId, setSelectedProjectId] = useState(() => activeProjects[0]?.id ?? "");
   const [mobileStatus, setMobileStatus] = useState<TaskStatus>("todo");
   const [draggedTaskId, setDraggedTaskId] = useState<string | null>(null);
   const [projectModal, setProjectModal] = useState<{ open: boolean; project?: Project | null }>({ open: false });
   const [taskModal, setTaskModal] = useState<{ open: boolean; task?: Task | null }>({ open: false });
+  const [archivedOpen, setArchivedOpen] = useState(false);
+  const [notesDraft, setNotesDraft] = useState("");
+  const [notesSaved, setNotesSaved] = useState(false);
 
-  const selectedProject = state.projects.find((project) => project.id === selectedProjectId) ?? activeProjects[0];
+  const selectedProject = activeProjects.find((project) => project.id === selectedProjectId) ?? activeProjects[0];
   const projectTasks = useMemo(() => state.tasks.filter((task) => task.projectId === selectedProject?.id), [state.tasks, selectedProject?.id]);
   const categories = useMemo(() => new Map(state.categories.map((category) => [category.id, category])), [state.categories]);
   const completed = projectTasks.filter((task) => task.status === "completed").length;
   const progress = projectTasks.length ? Math.round((completed / projectTasks.length) * 100) : 0;
+
+  useEffect(() => {
+    if (selectedProject) setNotesDraft(selectedProject.notes ?? "");
+  }, [selectedProject?.id, selectedProject?.notes]);
+
+  useEffect(() => {
+    if (!selectedProjectId && activeProjects[0]) setSelectedProjectId(activeProjects[0].id);
+    if (selectedProjectId && !activeProjects.some((project) => project.id === selectedProjectId) && activeProjects[0]) setSelectedProjectId(activeProjects[0].id);
+  }, [activeProjects, selectedProjectId]);
 
   if (!hydrated) return <div className="loading-screen"><span className="brand-mark">NOVA</span><p>Opening your projects…</p></div>;
 
@@ -34,6 +47,13 @@ export function ProjectsBoard() {
     if (!draggedTaskId) return;
     setTaskStatus(draggedTaskId, status);
     setDraggedTaskId(null);
+  }
+
+  function saveNotes() {
+    if (!selectedProject) return;
+    updateProject(selectedProject.id, { notes: notesDraft });
+    setNotesSaved(true);
+    window.setTimeout(() => setNotesSaved(false), 1800);
   }
 
   return (
@@ -58,11 +78,21 @@ export function ProjectsBoard() {
         <button className="project-summary-card add-project-card" onClick={() => setProjectModal({ open: true })}><span className="project-add-icon">＋</span><strong>New project</strong></button>
       </section>
 
+      {archivedProjects.length > 0 && <section className="archived-projects-panel">
+        <button className="archived-projects-toggle" onClick={() => setArchivedOpen((open) => !open)}><span>Archived projects</span><small>{archivedProjects.length}</small><b>{archivedOpen ? "⌃" : "⌄"}</b></button>
+        {archivedOpen && <div className="archived-projects-list">{archivedProjects.map((project) => <div className="archived-project-row" key={project.id}><span className="project-color" style={{ background: project.color }} /><div><strong>{project.name}</strong><small>{project.description || "Archived project"}</small></div><button className="soft-button" onClick={() => { updateProject(project.id, { status: "active" }); setSelectedProjectId(project.id); }}>Unarchive</button><button className="ghost-button" onClick={() => setProjectModal({ open: true, project })}>Edit</button></div>)}</div>}
+      </section>}
+
       {selectedProject ? (
         <section className="project-workspace">
           <div className="project-heading-row">
             <div><div className="project-title-line"><span className="project-color large" style={{ background: selectedProject.color }} /><h2>{selectedProject.name}</h2><button className="tiny-button" onClick={() => setProjectModal({ open: true, project: selectedProject })}>Edit</button></div><p>{selectedProject.description || "A focused place for this project."}</p></div>
             <div className="project-progress-block"><strong>{progress}%</strong><span>complete</span><div className="project-progress-track"><i style={{ width: `${progress}%`, background: selectedProject.color }} /></div></div>
+          </div>
+
+          <div className="project-notes-section">
+            <div className="project-notes-heading"><div><span className="eyebrow">PROJECT NOTES</span><strong>Progress & updates</strong></div><div>{notesSaved && <small>Saved</small>}<button className="soft-button" onClick={saveNotes}>Save notes</button></div></div>
+            <textarea value={notesDraft} onChange={(event) => setNotesDraft(event.target.value)} placeholder="Write progress updates, decisions, links, or anything you want to remember about this project…" rows={4} />
           </div>
 
           <div className="mobile-kanban-tabs">{columns.map((column) => <button key={column.status} className={mobileStatus === column.status ? "active" : ""} onClick={() => setMobileStatus(column.status)}>{column.label}<span>{projectTasks.filter((task) => task.status === column.status).length}</span></button>)}</div>

@@ -12,7 +12,7 @@ export function createSeedState(): NovaState {
   const now = nowIso();
 
   return {
-    version: 3,
+    version: 4,
     categories: [
       { id: "cat-personal", name: "Personal", color: "#D7C8ED" },
       { id: "cat-work", name: "Work", color: "#B29CE4" },
@@ -24,7 +24,8 @@ export function createSeedState(): NovaState {
     habitCompletions: {},
     externalEvents: [],
     settings: {
-      displayName: "Darren",
+      displayName: "Profile",
+      profileSetupComplete: false,
       eveningReviewTime: "20:30",
       notificationsEnabled: false,
       dayStartHour: 7,

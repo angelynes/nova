@@ -101,7 +101,7 @@ export function CalendarPlanner() {
         </aside>
       </div>
 
-      <TaskModal open={taskModal.open} onClose={() => setTaskModal({ open: false })} task={taskModal.task} defaultDate={selectedDate} />
+      <TaskModal open={taskModal.open} onClose={() => setTaskModal({ open: false })} task={taskModal.task} defaultDate={selectedDate} occurrenceDate={selectedDate} />
     </>
   );
 }

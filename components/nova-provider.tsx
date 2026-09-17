@@ -26,6 +26,7 @@ type NovaContextValue = {
   addTask: (task: Omit<Task, "id" | "createdAt" | "updatedAt">) => string;
   updateTask: (id: string, patch: Partial<Task>) => void;
   deleteTask: (id: string) => void;
+  reorderTask: (draggedId: string, targetId: string) => void;
   toggleTask: (id: string, onDate?: string) => void;
   setTaskStatus: (id: string, status: TaskStatus) => void;
   addProject: (project: Omit<Project, "id" | "createdAt">) => string;
@@ -34,6 +35,7 @@ type NovaContextValue = {
   addCategory: (category: Omit<Category, "id">) => string;
   updateCategory: (id: string, patch: Partial<Category>) => void;
   deleteCategory: (id: string) => void;
+  reorderCategory: (draggedId: string, targetId: string) => void;
   addHabit: (habit: Omit<Habit, "id" | "createdAt">) => string;
   updateHabit: (id: string, patch: Partial<Habit>) => void;
   deleteHabit: (id: string) => void;
@@ -87,7 +89,7 @@ function removeLegacyDemoData(state: NovaState): NovaState {
 
   return {
     ...state,
-    version: 3,
+    version: 4,
     categories,
     projects,
     tasks,
@@ -103,14 +105,38 @@ function normalizeState(input: unknown): NovaState | null {
   if (!Array.isArray(state.tasks) || !Array.isArray(state.projects) || !Array.isArray(state.categories)) return null;
 
   const base = createSeedState();
+  const settings = { ...base.settings, ...(state.settings ?? {}) };
+  const incomingName = (state.settings?.displayName ?? "").trim();
+  const hadCustomName = Boolean(incomingName) && !["darren", "profile"].includes(incomingName.toLowerCase());
+
+  // Migrate the old starter-build placeholder so an existing install never
+  // keeps showing a hardcoded profile owner. NOVA uses "Profile" until the
+  // user chooses a name.
+  if (!settings.displayName || settings.displayName.trim().toLowerCase() === "darren") {
+    settings.displayName = "Profile";
+  }
+  settings.profileSetupComplete = state.settings?.profileSetupComplete ?? hadCustomName;
+
   const normalized: NovaState = {
     ...base,
     ...state,
-    version: 3,
-    habits: Array.isArray(state.habits) ? state.habits : [],
+    version: 4,
+    tasks: Array.isArray(state.tasks)
+      ? state.tasks.map((task, index) => ({
+          ...task,
+          recurrence: task.recurrence ?? "none",
+          order: typeof task.order === "number" ? task.order : index,
+          excludedDates: task.excludedDates ?? [],
+        }))
+      : [],
+    projects: Array.isArray(state.projects) ? state.projects : [],
+    categories: Array.isArray(state.categories) ? state.categories : base.categories,
+    habits: Array.isArray(state.habits)
+      ? state.habits.map((habit) => ({ ...habit, excludedDates: habit.excludedDates ?? [] }))
+      : [],
     habitCompletions: state.habitCompletions ?? {},
     externalEvents: Array.isArray(state.externalEvents) ? state.externalEvents : [],
-    settings: { ...base.settings, ...(state.settings ?? {}) },
+    settings,
     lastUpdatedAt: state.lastUpdatedAt ?? new Date().toISOString(),
   };
 
@@ -125,9 +151,16 @@ export function NovaProvider({ children }: { children: React.ReactNode }) {
   const sessionRef = useRef<Session | null>(null);
   const supabaseRef = useRef<SupabaseClient | null>(null);
   const cloudLoadingRef = useRef(false);
+  const cloudReadyRef = useRef(false);
+  const lastRemoteUpdatedAtRef = useRef<string | null>(null);
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const stateRef = useRef<NovaState>(state);
 
   const cloudConfigured = hasSupabaseConfig();
+
+  useEffect(() => {
+    stateRef.current = state;
+  }, [state]);
 
   useEffect(() => {
     try {
@@ -149,6 +182,12 @@ export function NovaProvider({ children }: { children: React.ReactNode }) {
   }, [state, hydrated]);
 
   const loadCloud = useCallback(async (client: SupabaseClient, activeSession: Session) => {
+    // Avoid overlapping fetches. Supabase can emit an auth event at the same
+    // moment getSession() resolves, and two simultaneous loads used to let an
+    // older cloud snapshot overwrite freshly edited settings.
+    if (cloudLoadingRef.current) return;
+
+    const loadStartedAt = stateRef.current.lastUpdatedAt;
     cloudLoadingRef.current = true;
     setCloudStatus("connecting");
     const { data, error } = await client
@@ -163,19 +202,87 @@ export function NovaProvider({ children }: { children: React.ReactNode }) {
       return;
     }
 
+    const localSnapshot = stateRef.current;
+
     if (data?.data) {
       const remote = normalizeState(data.data);
-      if (remote) setState(remote);
+      if (remote) {
+        const remoteUpdatedAt = typeof data.updated_at === "string" ? data.updated_at : null;
+
+        if (!cloudReadyRef.current) {
+          const changedWhileLoading = localSnapshot.lastUpdatedAt !== loadStartedAt;
+
+          if (changedWhileLoading) {
+            // The user edited NOVA while the first cloud request was in flight.
+            // Never let the older response erase that fresh change.
+            const updatedAt = new Date().toISOString();
+            const { error: saveError } = await client.from("app_state").upsert({
+              user_id: activeSession.user.id,
+              data: localSnapshot,
+              updated_at: updatedAt,
+            });
+            if (saveError) {
+              cloudLoadingRef.current = false;
+              setCloudStatus("error");
+              return;
+            }
+            lastRemoteUpdatedAtRef.current = updatedAt;
+          } else {
+            // First cloud load on a settled screen: the signed-in account is
+            // the source of truth, so a new phone receives the same planner.
+            stateRef.current = remote;
+            setState(remote);
+            lastRemoteUpdatedAtRef.current = remoteUpdatedAt;
+          }
+        } else if (remoteUpdatedAt && remoteUpdatedAt !== lastRemoteUpdatedAtRef.current) {
+          // A different device may have changed the cloud row. Keep whichever
+          // NOVA state has the newest app-level edit timestamp. This prevents a
+          // focus refresh from wiping a name/timeline change that is still in
+          // the local debounce window.
+          const remoteStamp = Date.parse(remote.lastUpdatedAt || "");
+          const localStamp = Date.parse(localSnapshot.lastUpdatedAt || "");
+
+          if (Number.isFinite(remoteStamp) && (!Number.isFinite(localStamp) || remoteStamp > localStamp)) {
+            stateRef.current = remote;
+            setState(remote);
+            lastRemoteUpdatedAtRef.current = remoteUpdatedAt;
+          } else {
+            const updatedAt = new Date().toISOString();
+            const { error: saveError } = await client.from("app_state").upsert({
+              user_id: activeSession.user.id,
+              data: localSnapshot,
+              updated_at: updatedAt,
+            });
+            if (saveError) {
+              cloudLoadingRef.current = false;
+              setCloudStatus("error");
+              return;
+            }
+            lastRemoteUpdatedAtRef.current = updatedAt;
+          }
+        }
+      }
     } else {
-      await client.from("app_state").upsert({
+      // Brand-new cloud account: upload the current local planner instead of a
+      // stale state captured when this callback was first created.
+      const updatedAt = new Date().toISOString();
+      const { error: saveError } = await client.from("app_state").upsert({
         user_id: activeSession.user.id,
-        data: state,
-        updated_at: new Date().toISOString(),
+        data: localSnapshot,
+        updated_at: updatedAt,
       });
+      if (saveError) {
+        cloudLoadingRef.current = false;
+        setCloudStatus("error");
+        return;
+      }
+      lastRemoteUpdatedAtRef.current = updatedAt;
     }
+
+    cloudReadyRef.current = true;
     cloudLoadingRef.current = false;
     setCloudStatus("synced");
-  }, [state]);
+  }, []);
 
   useEffect(() => {
     if (!hydrated || !cloudConfigured) return;
@@ -193,7 +300,11 @@ export function NovaProvider({ children }: { children: React.ReactNode }) {
       setSession(nextSession);
       sessionRef.current = nextSession;
       if (nextSession) window.setTimeout(() => loadCloud(client, nextSession), 0);
-      else setCloudStatus("local");
+      else {
+        cloudReadyRef.current = false;
+        lastRemoteUpdatedAtRef.current = null;
+        setCloudStatus("local");
+      }
     });
 
     const onFocus = () => {
@@ -208,31 +319,41 @@ export function NovaProvider({ children }: { children: React.ReactNode }) {
   }, [hydrated, cloudConfigured]);
 
   useEffect(() => {
-    if (!hydrated || !session || !supabaseRef.current || cloudLoadingRef.current) return;
+    if (!hydrated || !session || !supabaseRef.current || cloudLoadingRef.current || !cloudReadyRef.current) return;
     if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
+    setCloudStatus("connecting");
     saveTimerRef.current = setTimeout(async () => {
       const client = supabaseRef.current;
       if (!client || !session) return;
+      const updatedAt = new Date().toISOString();
       const { error } = await client.from("app_state").upsert({
         user_id: session.user.id,
         data: state,
-        updated_at: new Date().toISOString(),
+        updated_at: updatedAt,
       });
+      if (!error) lastRemoteUpdatedAtRef.current = updatedAt;
       setCloudStatus(error ? "error" : "synced");
-    }, 700);
+    }, 350);
     return () => {
       if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
     };
   }, [state, session, hydrated]);
 
   const mutate = useCallback((recipe: (current: NovaState) => NovaState) => {
-    setState((current) => stamp(recipe(current)));
+    // Use the ref as the canonical in-memory snapshot so a manual Sync now
+    // immediately after an edit always sees that exact edit.
+    const next = stamp(recipe(stateRef.current));
+    stateRef.current = next;
+    setState(next);
   }, []);
 
   const addTask = useCallback((task: Omit<Task, "id" | "createdAt" | "updatedAt">) => {
     const id = crypto.randomUUID();
     const now = new Date().toISOString();
-    mutate((current) => ({ ...current, tasks: [...current.tasks, { ...task, id, createdAt: now, updatedAt: now }] }));
+    mutate((current) => {
+      const maxOrder = current.tasks.reduce((max, item) => Math.max(max, item.order ?? -1), -1);
+      return { ...current, tasks: [...current.tasks, { ...task, id, order: task.order ?? maxOrder + 1, createdAt: now, updatedAt: now }] };
+    });
     return id;
   }, [mutate]);
 
@@ -245,6 +366,20 @@ export function NovaProvider({ children }: { children: React.ReactNode }) {
 
   const deleteTask = useCallback((id: string) => {
     mutate((current) => ({ ...current, tasks: current.tasks.filter((task) => task.id !== id) }));
+  }, [mutate]);
+
+  const reorderTask = useCallback((draggedId: string, targetId: string) => {
+    if (draggedId === targetId) return;
+    mutate((current) => {
+      const ordered = [...current.tasks].sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
+      const from = ordered.findIndex((task) => task.id === draggedId);
+      const to = ordered.findIndex((task) => task.id === targetId);
+      if (from < 0 || to < 0) return current;
+      const [moved] = ordered.splice(from, 1);
+      ordered.splice(to, 0, moved);
+      const orderById = new Map(ordered.map((task, index) => [task.id, index]));
+      return { ...current, tasks: current.tasks.map((task) => ({ ...task, order: orderById.get(task.id) ?? task.order })) };
+    });
   }, [mutate]);
 
   const toggleTask = useCallback((id: string, onDate = dateKey()) => {
@@ -311,6 +446,19 @@ export function NovaProvider({ children }: { children: React.ReactNode }) {
       tasks: current.tasks.map((task) => task.categoryId === id ? { ...task, categoryId: undefined } : task),
       habits: current.habits.map((habit) => habit.categoryId === id ? { ...habit, categoryId: undefined } : habit),
     }));
+  }, [mutate]);
+
+  const reorderCategory = useCallback((draggedId: string, targetId: string) => {
+    if (draggedId === targetId) return;
+    mutate((current) => {
+      const categories = [...current.categories];
+      const from = categories.findIndex((category) => category.id === draggedId);
+      const to = categories.findIndex((category) => category.id === targetId);
+      if (from < 0 || to < 0) return current;
+      const [moved] = categories.splice(from, 1);
+      categories.splice(to, 0, moved);
+      return { ...current, categories };
+    });
   }, [mutate]);
 
   const addHabit = useCallback((habit: Omit<Habit, "id" | "createdAt">) => {
@@ -382,6 +530,8 @@ export function NovaProvider({ children }: { children: React.ReactNode }) {
     await supabaseRef.current?.auth.signOut();
     setSession(null);
     sessionRef.current = null;
+    cloudReadyRef.current = false;
+    lastRemoteUpdatedAtRef.current = null;
     setCloudStatus("local");
   }, []);
 
@@ -389,13 +539,18 @@ export function NovaProvider({ children }: { children: React.ReactNode }) {
     const client = supabaseRef.current;
     if (!client || !session) return;
     setCloudStatus("connecting");
+    const updatedAt = new Date().toISOString();
     const { error } = await client.from("app_state").upsert({
       user_id: session.user.id,
-      data: state,
-      updated_at: new Date().toISOString(),
+      data: stateRef.current,
+      updated_at: updatedAt,
     });
+    if (!error) {
+      lastRemoteUpdatedAtRef.current = updatedAt;
+      cloudReadyRef.current = true;
+    }
     setCloudStatus(error ? "error" : "synced");
-  }, [session, state]);
+  }, [session]);
 
   const value = useMemo<NovaContextValue>(() => ({
     state,
@@ -403,6 +558,7 @@ export function NovaProvider({ children }: { children: React.ReactNode }) {
     addTask,
     updateTask,
     deleteTask,
+    reorderTask,
     toggleTask,
     setTaskStatus,
     addProject,
@@ -411,6 +567,7 @@ export function NovaProvider({ children }: { children: React.ReactNode }) {
     addCategory,
     updateCategory,
     deleteCategory,
+    reorderCategory,
     addHabit,
     updateHabit,
     deleteHabit,
@@ -427,8 +584,8 @@ export function NovaProvider({ children }: { children: React.ReactNode }) {
     signOutCloud,
     syncNow,
   }), [
-    state, hydrated, addTask, updateTask, deleteTask, toggleTask, setTaskStatus,
-    addProject, updateProject, deleteProject, addCategory, updateCategory, deleteCategory,
+    state, hydrated, addTask, updateTask, deleteTask, reorderTask, toggleTask, setTaskStatus,
+    addProject, updateProject, deleteProject, addCategory, updateCategory, deleteCategory, reorderCategory,
     addHabit, updateHabit, deleteHabit, toggleHabit, importExternalEvents, clearImportedEvents,
     updateSettings, importState, resetState, cloudConfigured, cloudStatus, session,
     sendMagicLink, signOutCloud, syncNow,

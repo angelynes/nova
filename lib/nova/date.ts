@@ -58,8 +58,17 @@ export function minutesFromTime(value?: string) {
   return (h || 0) * 60 + (m || 0);
 }
 
+export function timeFromMinutes(total: number) {
+  const clamped = Math.max(0, Math.min(23 * 60 + 59, Math.round(total)));
+  const hours = Math.floor(clamped / 60);
+  const minutes = clamped % 60;
+  return `${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}`;
+}
+
 export function taskOccursOn(task: Task, targetDate: string) {
-  if (!task.dueDate) return targetDate === dateKey();
+  if (task.excludedDates?.includes(targetDate)) return false;
+  if (task.recurrenceEndDate && targetDate > task.recurrenceEndDate) return false;
+  if (!task.dueDate) return task.recurrence === "none" ? targetDate === dateKey() : false;
   if (targetDate < task.dueDate) return false;
   const base = parseDateKey(task.dueDate);
   const target = parseDateKey(targetDate);
@@ -69,10 +78,14 @@ export function taskOccursOn(task: Task, targetDate: string) {
       return true;
     case "weekdays":
       return target.getDay() >= 1 && target.getDay() <= 5;
+    case "weekends":
+      return target.getDay() === 0 || target.getDay() === 6;
     case "weekly":
-      return target.getDay() === base.getDay();
+      return (task.recurrenceDays?.length ? task.recurrenceDays : [base.getDay()]).includes(target.getDay());
     case "monthly":
       return target.getDate() === base.getDate();
+    case "yearly":
+      return target.getMonth() === base.getMonth() && target.getDate() === base.getDate();
     case "none":
     default:
       return task.dueDate === targetDate;
@@ -88,7 +101,14 @@ export function taskIsCompletedOn(task: Task, targetDate: string) {
 
 export function habitOccursOn(habit: Habit, targetDate: string) {
   if (!habit.active) return false;
+  if (habit.excludedDates?.includes(targetDate)) return false;
+  if (habit.recurrenceEndDate && targetDate > habit.recurrenceEndDate) return false;
   const day = parseDateKey(targetDate).getDay();
+
+  // New NOVA habits use a single day-of-week picker. This also makes old
+  // frequency-based habits backwards compatible without showing redundant UI.
+  if (habit.weekdays?.length) return habit.weekdays.includes(day);
+
   switch (habit.frequency) {
     case "weekdays":
       return day >= 1 && day <= 5;

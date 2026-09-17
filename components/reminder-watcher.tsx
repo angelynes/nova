@@ -15,7 +15,7 @@ export function ReminderWatcher() {
       const today = dateKey(now);
       const nowMinutes = now.getHours() * 60 + now.getMinutes();
 
-      state.tasks.filter((task) => task.scheduledTime && taskOccursOn(task, today) && !taskIsCompletedOn(task, today)).forEach((task) => {
+      state.tasks.filter((task) => task.scheduledTime && task.reminderMinutes != null && taskOccursOn(task, today) && !taskIsCompletedOn(task, today)).forEach((task) => {
         const start = minutesFromTime(task.scheduledTime);
         if (start == null) return;
         const trigger = start - (task.reminderMinutes ?? 0) - (task.travelTimeMinutes ?? 0);
@@ -30,7 +30,7 @@ export function ReminderWatcher() {
         window.localStorage.setItem(key, "1");
       });
 
-      state.habits.filter((habit) => habit.scheduledTime && habitOccursOn(habit, today) && !(state.habitCompletions[habit.id] ?? []).includes(today)).forEach((habit) => {
+      state.habits.filter((habit) => habit.scheduledTime && habit.reminderMinutes != null && habitOccursOn(habit, today) && !(state.habitCompletions[habit.id] ?? []).includes(today)).forEach((habit) => {
         const start = minutesFromTime(habit.scheduledTime);
         if (start == null) return;
         const trigger = start - (habit.reminderMinutes ?? 0);
