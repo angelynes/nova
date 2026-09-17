@@ -1,4 +1,4 @@
-# NOVA Planner — V1 Production Clean Build
+# NOVA Planner
 
 NOVA is a responsive personal planner that starts clean (no demo tasks/projects/habits/events) and combines a daily to-do list, Hobonichi-style timeline, projects/Kanban, a clean monthly calendar, habits, recurring tasks, reminders, end-of-day review, and optional cloud sync.
 
