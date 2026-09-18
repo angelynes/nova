@@ -1,7 +1,7 @@
 "use client";
 
 import { FormEvent, useEffect, useState } from "react";
-import { addDays, dateKey } from "@/lib/nova/date";
+import { addDays, dateKey, durationInputParts, durationToMinutes, type DurationUnit } from "@/lib/nova/date";
 import { THEME_META } from "@/lib/nova/theme";
 import { useNova } from "./nova-provider";
 import type { Habit, HabitSubtask } from "@/lib/nova/types";
@@ -27,6 +27,9 @@ export function HabitModal({
   const [subtasks, setSubtasks] = useState<HabitSubtask[]>([]);
   const [newSubtask, setNewSubtask] = useState("");
   const [color, setColor] = useState(THEME_META[state.settings.theme].habitColor);
+  const initialDuration = durationInputParts(habit?.durationMinutes);
+  const [durationValue, setDurationValue] = useState(initialDuration.value);
+  const [durationUnit, setDurationUnit] = useState<DurationUnit>(initialDuration.unit);
 
   useEffect(() => {
     if (!open) return;
@@ -38,6 +41,9 @@ export function HabitModal({
     setSubtasks(habit?.subtasks ?? []);
     setNewSubtask("");
     setColor(habit?.color ?? THEME_META[state.settings.theme].habitColor);
+    const duration = durationInputParts(habit?.durationMinutes);
+    setDurationValue(duration.value);
+    setDurationUnit(duration.unit);
   }, [open, habit, state.settings.theme]);
 
   if (!open) return null;
@@ -52,15 +58,14 @@ export function HabitModal({
       return;
     }
     const reminderRaw = String(data.get("reminderMinutes") || "");
-    const durationRaw = String(data.get("durationMinutes") || "");
     const reminderMinutes = reminderRaw ? Number(reminderRaw) : undefined;
-    const durationMinutes = durationRaw ? Number(durationRaw) : undefined;
+    const durationMinutes = durationToMinutes(durationValue, durationUnit);
     const payload = {
       name,
       frequency: "custom" as const,
       weekdays: selectedDays,
       scheduledTime: String(data.get("scheduledTime") || "") || undefined,
-      durationMinutes: Number.isFinite(durationMinutes) && (durationMinutes ?? 0) > 0 ? durationMinutes : undefined,
+      durationMinutes,
       reminderMinutes: Number.isFinite(reminderMinutes) && (reminderMinutes ?? -1) >= 0 ? reminderMinutes : undefined,
       color,
       subtasks: subtasks.filter((item) => item.title.trim()).map((item) => ({ ...item, title: item.title.trim() })),
@@ -98,6 +103,13 @@ export function HabitModal({
     onClose();
   }
 
+  function duplicateCurrentRoutine() {
+    if (!habit) return;
+    const { id: _id, createdAt: _createdAt, ...copy } = habit;
+    addHabit({ ...copy, excludedDates: [], recurrenceEndDate: undefined, active: true, subtasks: (copy.subtasks ?? []).map((item) => ({ ...item, id: crypto.randomUUID() })) });
+    onClose();
+  }
+
   return (
     <div className="modal-backdrop" role="presentation" onMouseDown={onClose}>
       <form className="modal-card habit-composer" onSubmit={submit} onMouseDown={(e) => e.stopPropagation()}>
@@ -106,7 +118,7 @@ export function HabitModal({
 
         <div className="form-grid two">
           <label className="field"><span>Time</span><input name="scheduledTime" type="time" defaultValue={habit?.scheduledTime ?? ""} /></label>
-          <label className="field"><span>Duration</span><select name="durationMinutes" defaultValue={habit?.durationMinutes ? String(habit.durationMinutes) : ""}><option value="">No duration</option><option value="15">15 minutes</option><option value="30">30 minutes</option><option value="45">45 minutes</option><option value="60">1 hour</option><option value="90">1.5 hours</option><option value="120">2 hours</option></select></label>
+          <label className="field"><span>Duration</span><div className="duration-input-row"><input type="number" min="0" step="0.25" inputMode="decimal" value={durationValue} onChange={(event) => setDurationValue(event.target.value)} placeholder="No duration" /><select value={durationUnit} onChange={(event) => setDurationUnit(event.target.value as DurationUnit)}><option value="minutes">Minutes</option><option value="hours">Hours</option><option value="days">Days</option></select></div><small className="field-help">Leave the amount blank for no duration.</small></label>
           <label className="field"><span>Reminder</span><select name="reminderMinutes" defaultValue={habit?.reminderMinutes == null ? "" : String(habit.reminderMinutes)}><option value="">No reminder</option><option value="0">At start</option><option value="5">5 minutes before</option><option value="10">10 minutes before</option><option value="30">30 minutes before</option><option value="60">1 hour before</option></select></label>
           <label className="field"><span>Habit color</span><div className="habit-color-control"><input type="color" value={color} onChange={(event) => setColor(event.target.value)} /><span style={{ background: color }} /></div></label>
         </div>
@@ -122,7 +134,7 @@ export function HabitModal({
         {deletePrompt && habit ? (
           <div className="delete-choice-panel"><strong>Delete repeating routine</strong><p>Choose whether to skip only this occurrence or stop the routine from this date forward.</p><div className="delete-choice-actions"><button type="button" className="soft-button" onClick={deleteThisOccurrence}>Delete this event only</button><button type="button" className="soft-button" onClick={deleteFuture}>Delete this & future</button><button type="button" className="danger-button" onClick={() => { deleteHabit(habit.id); onClose(); }}>Delete entire routine</button><button type="button" className="ghost-button" onClick={() => setDeletePrompt(false)}>Cancel</button></div></div>
         ) : (
-          <div className="modal-actions">{habit ? <button type="button" className="danger-button" onClick={() => setDeletePrompt(true)}>Delete</button> : <span />}<button className="primary-button" type="submit">{habit ? "Save routine" : "Add routine"}</button></div>
+          <div className="modal-actions">{habit ? <div className="modal-secondary-actions"><button type="button" className="danger-button" onClick={() => setDeletePrompt(true)}>Delete</button><button type="button" className="ghost-button" onClick={duplicateCurrentRoutine}>Duplicate</button></div> : <span />}<button className="primary-button" type="submit">{habit ? "Save routine" : "Add routine"}</button></div>
         )}
       </form>
     </div>

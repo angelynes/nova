@@ -4,7 +4,7 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useRef, use
 import type { Provider, Session, SupabaseClient } from "@supabase/supabase-js";
 import { createClient, hasSupabaseConfig } from "@/lib/supabase/client";
 import { createSeedState } from "@/lib/nova/seed";
-import { dateKey, minutesFromTime, taskIsCompletedOn, taskOccursOn, zonedNow } from "@/lib/nova/date";
+import { addDays, dateKey, minutesFromTime, taskIsCompletedOn, taskOccursOn, zonedNow } from "@/lib/nova/date";
 import type {
   Category,
   ExternalCalendarEvent,
@@ -80,6 +80,16 @@ const LEGACY_PROJECT_DESCRIPTIONS = new Set([
   "an all-in-one planner, with day-to-day tasks and project manager",
   "an all-in-one planner with day-to-day tasks and project manager",
 ]);
+const CATEGORY_COLOR_MIGRATION: Record<string, string> = {
+  "#d7c8ed": "#EEE8F7", "#b29ce4": "#E5DCF5", "#e8cfe5": "#F5E5F1", "#c9d8ee": "#E6EEF9",
+  "#e6d7b8": "#F7EEDC", "#bfd8ce": "#E2F0E9", "#d9c7ef": "#ECE5F8", "#f0d6e4": "#F8E8EF",
+  "#d8dcdd": "#ECEEEF", "#bfc7c9": "#E5E9EA", "#d9d4cb": "#EFECE7", "#c8d1cb": "#E4ECE7",
+  "#d4d0dc": "#ECE9F0", "#e2d5cf": "#F1E9E5", "#c7d3db": "#E4EBF0", "#dfdece": "#F0EFE5",
+  "#f2c9d9": "#F9E4EC", "#e8b8cc": "#F6DCE7", "#f7d9e5": "#FCEBF2", "#e6cbd6": "#F4E3EA",
+  "#f0cdbf": "#F8E5DD", "#d9cedf": "#EDE5F1", "#f4d6d0": "#FAE8E4", "#e7bfd0": "#F5DFE8",
+  "#bfe6e3": "#DDF3F1", "#8ed6d2": "#D2EEEB", "#c7dfec": "#E1EFF7", "#bbd8d2": "#DCEEEA",
+  "#d7e8c8": "#E8F3DD", "#c9d4e8": "#E3EAF6", "#a9ddd7": "#D5F2EF", "#d5e9e7": "#E8F5F3",
+};
 
 function removeLegacyDemoData(state: NovaState): NovaState {
   const categories = state.categories.filter((category) => category.id !== "cat-project");
@@ -112,6 +122,8 @@ function normalizeState(input: unknown): NovaState | null {
   settings.profileSetupComplete = state.settings?.profileSetupComplete ?? hadCustomName;
   if (!VALID_THEMES.has(settings.theme as ThemeId)) settings.theme = "lavender";
   if (!settings.timeZone) settings.timeZone = "auto";
+  settings.dayStartHour = Math.max(0, Math.min(23, Number(settings.dayStartHour ?? 7)));
+  settings.dayEndHour = Math.max(settings.dayStartHour + 1, Math.min(47, Number(settings.dayEndHour ?? 22)));
 
   const normalized: NovaState = {
     ...base,
@@ -132,7 +144,10 @@ function normalizeState(input: unknown): NovaState | null {
       const cleanedDescription = description && !LEGACY_PROJECT_DESCRIPTIONS.has(description.toLowerCase()) ? description : undefined;
       return { ...project, description: cleanedDescription, updates: existingUpdates.length ? existingUpdates : migratedUpdate };
     }),
-    categories: state.categories,
+    categories: state.categories.map((category) => ({
+      ...category,
+      color: CATEGORY_COLOR_MIGRATION[category.color?.toLowerCase?.() ?? ""] ?? category.color,
+    })),
     habits: Array.isArray(state.habits)
       ? state.habits.map((habit) => ({
           ...habit,
@@ -313,9 +328,17 @@ export function NovaProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   // Scheduled tasks complete automatically once their scheduled end time has passed.
-  // Habits/routines are intentionally excluded: they always require a manual check.
+  // Durations may cross midnight or span multiple days. Habits/routines are intentionally
+  // excluded: they always require a manual check.
   useEffect(() => {
     if (!hydrated) return;
+
+    const occurrenceHasEnded = (occurrenceDate: string, startMinutes: number, durationMinutes: number, nowDate: string, nowMinutes: number) => {
+      const totalEnd = startMinutes + Math.max(0, durationMinutes);
+      const endDate = addDays(occurrenceDate, Math.floor(totalEnd / (24 * 60)));
+      const endMinutes = totalEnd % (24 * 60);
+      return nowDate > endDate || (nowDate === endDate && nowMinutes >= endMinutes);
+    };
 
     const completePassedTasks = () => {
       const now = zonedNow(stateRef.current.settings.timeZone);
@@ -326,18 +349,28 @@ export function NovaProvider({ children }: { children: React.ReactNode }) {
         if (!task.scheduledTime) return task;
         const start = minutesFromTime(task.scheduledTime);
         if (start == null) return task;
-        const end = start + (task.durationMinutes ?? 0);
+        const duration = task.durationMinutes ?? 0;
 
         if (task.recurrence !== "none") {
-          if (!taskOccursOn(task, now.dateKey) || taskIsCompletedOn(task, now.dateKey) || now.minutes < end) return task;
+          const completedDates = new Set(task.completedDates ?? []);
+          const lookbackDays = Math.max(1, Math.ceil(duration / (24 * 60)) + 1);
+          let taskChanged = false;
+          for (let offset = lookbackDays; offset >= 0; offset -= 1) {
+            const occurrenceDate = addDays(now.dateKey, -offset);
+            if (!taskOccursOn(task, occurrenceDate) || completedDates.has(occurrenceDate)) continue;
+            if (occurrenceHasEnded(occurrenceDate, start, duration, now.dateKey, now.minutes)) {
+              completedDates.add(occurrenceDate);
+              taskChanged = true;
+            }
+          }
+          if (!taskChanged) return task;
           changed = true;
-          return { ...task, completedDates: [...new Set([...(task.completedDates ?? []), now.dateKey])], updatedAt: completedAt };
+          return { ...task, completedDates: [...completedDates], updatedAt: completedAt };
         }
 
         if (taskIsCompletedOn(task, task.dueDate ?? now.dateKey)) return task;
-        const taskDate = task.dueDate ?? now.dateKey;
-        const hasPassed = taskDate < now.dateKey || (taskDate === now.dateKey && now.minutes >= end);
-        if (!hasPassed) return task;
+        const occurrenceDate = task.dueDate ?? now.dateKey;
+        if (!occurrenceHasEnded(occurrenceDate, start, duration, now.dateKey, now.minutes)) return task;
         changed = true;
         return { ...task, status: "completed" as const, completedAt, updatedAt: completedAt };
       });

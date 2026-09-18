@@ -8,7 +8,7 @@ NOVA currently runs as a responsive web app / PWA and is optimized for both lapt
 
 ---
 
-## Current build: V1.2.1
+## Current build: V1.2.2
 
 This version includes the September 17 planning, personalization, and behavior updates.
 
@@ -274,7 +274,7 @@ Planner state is stored in:
 public.app_state
 ```
 
-The app currently stores planner data in the existing JSON state row, so V1.2.1 does not require a new database migration.
+The app currently stores planner data in the existing JSON state row, so V1.2.2 does not require a new database migration.
 
 Cloud sync is intended to keep the same NOVA account consistent across:
 
@@ -342,6 +342,17 @@ The selected time zone is used for:
 - daily planning behavior
 
 ---
+
+
+## V1.2.2 additions
+
+- Task and routine durations can be entered as any custom amount of **minutes, hours, or days**.
+- Existing tasks and routines can be **duplicated** from their edit window.
+- The Today timeline can extend past midnight into the following calendar day. For example, Monday can be configured to show **12 AM Monday through 4 AM Tuesday**. Early Tuesday scheduled items then appear at the bottom of Monday's extended schedule as well as in Tuesday's own view.
+- Timeline hour labels use `+1` for next-day hours.
+- Scheduled tasks with overnight or multi-day durations auto-complete only after their true end date/time. Habits/routines still never auto-complete.
+- Category suggestions use a lighter pastel palette across every theme. Known old NOVA palette colors migrate automatically; custom colors are preserved.
+- Profile photos use a stricter center crop and circular mask in both Settings and the sidebar.
 
 ## Current completion behavior
 

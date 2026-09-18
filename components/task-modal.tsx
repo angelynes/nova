@@ -1,7 +1,7 @@
 "use client";
 
 import { FormEvent, useEffect, useMemo, useState } from "react";
-import { addDays, dateKey, googleMapsUrl, parseDateKey } from "@/lib/nova/date";
+import { addDays, dateKey, durationInputParts, durationToMinutes, googleMapsUrl, parseDateKey, type DurationUnit } from "@/lib/nova/date";
 import { useNova } from "./nova-provider";
 import type { Recurrence, Task, TaskStatus } from "@/lib/nova/types";
 
@@ -33,6 +33,9 @@ export function TaskModal({
   const [deletePrompt, setDeletePrompt] = useState(false);
   const [selectedProjectId, setSelectedProjectId] = useState(task?.projectId ?? defaultProjectId ?? "");
   const [location, setLocation] = useState(task?.location ?? "");
+  const initialDuration = durationInputParts(task?.durationMinutes);
+  const [durationValue, setDurationValue] = useState(initialDuration.value);
+  const [durationUnit, setDurationUnit] = useState<DurationUnit>(initialDuration.unit);
 
   useEffect(() => {
     if (!open) return;
@@ -44,6 +47,9 @@ export function TaskModal({
     setDeletePrompt(false);
     setSelectedProjectId(task?.projectId ?? defaultProjectId ?? "");
     setLocation(task?.location ?? "");
+    const duration = durationInputParts(task?.durationMinutes);
+    setDurationValue(duration.value);
+    setDurationUnit(duration.unit);
   }, [open, task, defaultDate, defaultProjectId]);
 
   const key = `${task?.id ?? "new"}-${defaultDate ?? ""}-${defaultProjectId ?? ""}-${defaultTime ?? ""}`;
@@ -79,10 +85,9 @@ export function TaskModal({
     let dueDate = String(data.get("dueDate") || "") || undefined;
     if (recurrence !== "none" && !dueDate) dueDate = defaultDate ?? dateKey();
     const scheduledTime = String(data.get("scheduledTime") || "") || undefined;
-    const durationRaw = String(data.get("durationMinutes") || "");
     const reminderRaw = String(data.get("reminderMinutes") || "");
     const travelRaw = String(data.get("travelTimeMinutes") || "");
-    const durationMinutes = durationRaw ? Number(durationRaw) : undefined;
+    const durationMinutes = durationToMinutes(durationValue, durationUnit);
     const reminderMinutes = reminderRaw ? Number(reminderRaw) : undefined;
     const travelTimeMinutes = travelRaw ? Number(travelRaw) : undefined;
 
@@ -94,7 +99,7 @@ export function TaskModal({
       status,
       dueDate,
       scheduledTime,
-      durationMinutes: Number.isFinite(durationMinutes) && (durationMinutes ?? 0) > 0 ? durationMinutes : undefined,
+      durationMinutes,
       recurrence,
       recurrenceDays: recurrence === "weekly" ? recurrenceDays : undefined,
       recurrenceEndDate: task?.recurrenceEndDate,
@@ -148,6 +153,13 @@ export function TaskModal({
     onClose();
   }
 
+  function duplicateCurrentTask() {
+    if (!task) return;
+    const { id: _id, createdAt: _createdAt, updatedAt: _updatedAt, completedAt: _completedAt, completedDates: _completedDates, order: _order, ...copy } = task;
+    addTask({ ...copy, status: task.projectId ? "todo" : "todo", completedAt: undefined, completedDates: [] });
+    onClose();
+  }
+
   return (
     <div className="modal-backdrop" role="presentation" onMouseDown={onClose}>
       <form key={key} className="modal-card task-composer" onSubmit={submit} onMouseDown={(e) => e.stopPropagation()}>
@@ -171,7 +183,7 @@ export function TaskModal({
           <div className="advanced-fields">
             <div className="form-grid two">
               {selectedProjectId && <label className="field"><span>Status</span><select name="status" defaultValue={initial.status}><option value="todo">To Do</option><option value="in_progress">In Progress</option><option value="completed">Completed</option></select></label>}
-              <label className="field"><span>Duration</span><select name="durationMinutes" defaultValue={initial.durationMinutes ? String(initial.durationMinutes) : ""}><option value="">No duration</option><option value="15">15 minutes</option><option value="30">30 minutes</option><option value="45">45 minutes</option><option value="60">1 hour</option><option value="90">1.5 hours</option><option value="120">2 hours</option><option value="180">3 hours</option></select></label>
+              <label className="field"><span>Duration</span><div className="duration-input-row"><input type="number" min="0" step="0.25" inputMode="decimal" value={durationValue} onChange={(event) => setDurationValue(event.target.value)} placeholder="No duration" /><select value={durationUnit} onChange={(event) => setDurationUnit(event.target.value as DurationUnit)}><option value="minutes">Minutes</option><option value="hours">Hours</option><option value="days">Days</option></select></div><small className="field-help">Leave the amount blank for no duration.</small></label>
               <label className="field"><span>Repeat</span><select name="recurrence" value={recurrence} onChange={(event) => setRecurrence(event.target.value as Recurrence)}><option value="none">Never</option><option value="daily">Daily</option><option value="weekdays">Weekdays</option><option value="weekends">Weekends</option><option value="weekly">Weekly / selected days</option><option value="monthly">Monthly</option><option value="yearly">Yearly</option></select></label>
               <label className="field"><span>Reminder</span><select name="reminderMinutes" defaultValue={initial.reminderMinutes == null ? "" : String(initial.reminderMinutes)}><option value="">No reminder</option><option value="0">At start time</option><option value="5">5 minutes before</option><option value="10">10 minutes before</option><option value="15">15 minutes before</option><option value="30">30 minutes before</option><option value="60">1 hour before</option></select></label>
             </div>
@@ -196,7 +208,7 @@ export function TaskModal({
             </div>
           </div>
         ) : (
-          <div className="modal-actions">{task ? <button type="button" className="danger-button" onClick={handleDeleteClick}>Delete</button> : <span />}<button className="primary-button" type="submit">{task ? "Save changes" : "Add task"}</button></div>
+          <div className="modal-actions">{task ? <div className="modal-secondary-actions"><button type="button" className="danger-button" onClick={handleDeleteClick}>Delete</button><button type="button" className="ghost-button" onClick={duplicateCurrentTask}>Duplicate</button></div> : <span />}<button className="primary-button" type="submit">{task ? "Save changes" : "Add task"}</button></div>
         )}
       </form>
     </div>

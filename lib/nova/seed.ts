@@ -8,9 +8,9 @@ export function createSeedState(): NovaState {
   return {
     version: 5,
     categories: [
-      { id: "cat-personal", name: "Personal", color: "#D7C8ED" },
-      { id: "cat-work", name: "Work", color: "#B29CE4" },
-      { id: "cat-errands", name: "Errands", color: "#E8CFE5" },
+      { id: "cat-personal", name: "Personal", color: "#EEE8F7" },
+      { id: "cat-work", name: "Work", color: "#E5DCF5" },
+      { id: "cat-errands", name: "Errands", color: "#F5E5F1" },
     ],
     projects: [],
     tasks: [],

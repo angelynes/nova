@@ -16,6 +16,13 @@ const TIME_ZONES = [
   ["UTC", "UTC"],
 ] as const;
 
+function hourOptionLabel(hour: number) {
+  const normalized = ((hour % 24) + 24) % 24;
+  const date = new Date(2020, 0, 1, normalized, 0, 0, 0);
+  const label = new Intl.DateTimeFormat(undefined, { hour: "numeric" }).format(date);
+  return hour >= 24 ? `${label} · next day` : label;
+}
+
 async function imageFileToAvatar(file: File) {
   return new Promise<string>((resolve, reject) => {
     const reader = new FileReader();
@@ -34,14 +41,8 @@ async function imageFileToAvatar(file: File) {
         const sx = (image.width - crop) / 2;
         const sy = (image.height - crop) / 2;
         context.clearRect(0, 0, size, size);
-        context.save();
-        context.beginPath();
-        context.arc(size / 2, size / 2, size / 2, 0, Math.PI * 2);
-        context.closePath();
-        context.clip();
         context.drawImage(image, sx, sy, crop, crop, 0, 0, size, size);
-        context.restore();
-        resolve(canvas.toDataURL("image/png"));
+        resolve(canvas.toDataURL("image/jpeg", 0.88));
       };
       image.src = String(reader.result);
     };
@@ -177,6 +178,9 @@ export function SettingsPanel() {
     setNewCategory((current) => ({ ...current, color: firstColor }));
   }
 
+  const dayStartOptions = Array.from({ length: 24 }, (_, hour) => hour);
+  const dayEndOptions = Array.from({ length: 47 - dayDraft.dayStartHour }, (_, index) => dayDraft.dayStartHour + 1 + index);
+
   return (
     <>
       <header className="page-header settings-header"><div><p className="mobile-brand">NOVA</p><span className="eyebrow">PREFERENCES</span><h1>Settings</h1><p className="subtitle">Tune NOVA around how you actually plan.</p></div></header>
@@ -189,7 +193,7 @@ export function SettingsPanel() {
             <label className="field"><span>Name</span><input value={dayDraft.displayName} onChange={(e) => setDayDraft((current) => ({ ...current, displayName: e.target.value }))} /></label>
             <label className="field"><span>Time zone</span><select value={dayDraft.timeZone} onChange={(e) => setDayDraft((current) => ({ ...current, timeZone: e.target.value }))}>{TIME_ZONES.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select><small className="field-help">Current resolved zone: {resolvedTimeZone(dayDraft.timeZone)}. Choose Pacific Time if you want NOVA fixed to PST/PDT even when traveling.</small></label>
             <label className="field"><span>Evening review</span><input type="time" value={dayDraft.eveningReviewTime} onChange={(e) => setDayDraft((current) => ({ ...current, eveningReviewTime: e.target.value }))} /></label>
-            <div className="form-grid two"><label className="field"><span>Timeline starts</span><select value={dayDraft.dayStartHour} onChange={(e) => setDayDraft((current) => ({ ...current, dayStartHour: Number(e.target.value) }))}>{Array.from({ length: 16 }, (_, i) => i).map((hour) => <option key={hour} value={hour}>{String(hour).padStart(2, "0")}:00</option>)}</select></label><label className="field"><span>Timeline ends</span><select value={dayDraft.dayEndHour} onChange={(e) => setDayDraft((current) => ({ ...current, dayEndHour: Number(e.target.value) }))}>{Array.from({ length: 17 }, (_, i) => i + 7).map((hour) => <option key={hour} value={hour}>{String(hour).padStart(2, "0")}:00</option>)}</select></label></div>
+            <div className="form-grid two"><label className="field"><span>Timeline starts</span><select value={dayDraft.dayStartHour} onChange={(e) => { const dayStartHour = Number(e.target.value); setDayDraft((current) => ({ ...current, dayStartHour, dayEndHour: current.dayEndHour <= dayStartHour ? dayStartHour + 1 : current.dayEndHour })); }}>{dayStartOptions.map((hour) => <option key={hour} value={hour}>{hourOptionLabel(hour)}</option>)}</select></label><label className="field"><span>Timeline ends</span><select value={dayDraft.dayEndHour} onChange={(e) => setDayDraft((current) => ({ ...current, dayEndHour: Number(e.target.value) }))}>{dayEndOptions.map((hour) => <option key={hour} value={hour}>{hourOptionLabel(hour)}</option>)}</select><small className="field-help">Choose a next-day hour to keep the previous day open past midnight, e.g. Monday 12 AM → Tuesday 4 AM.</small></label></div>
             <label className="toggle-row"><span><strong>Week starts Monday</strong><small>Changes the monthly calendar layout.</small></span><input type="checkbox" checked={dayDraft.weekStartsMonday} onChange={(e) => setDayDraft((current) => ({ ...current, weekStartsMonday: e.target.checked }))} /></label>
             <div className="inline-actions settings-save-row"><button className="primary-button" type="button" onClick={saveDayPreferences}>Save changes</button>{daySaveMessage && <small className="settings-save-message">{daySaveMessage}</small>}</div>
           </div>

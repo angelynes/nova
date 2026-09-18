@@ -67,18 +67,43 @@ export function timeFromMinutes(total: number) {
 
 export function durationLabel(minutes?: number) {
   if (!minutes) return "No duration";
-  if (minutes < 60) return `${minutes} min`;
-  const hours = Math.floor(minutes / 60);
-  const rest = minutes % 60;
-  if (!rest) return `${hours} hr${hours === 1 ? "" : "s"}`;
-  return `${hours} hr ${rest} min`;
+  const rounded = Math.round(minutes);
+  if (rounded < 60) return `${rounded} min`;
+  const days = Math.floor(rounded / (24 * 60));
+  const remainingAfterDays = rounded % (24 * 60);
+  const hours = Math.floor(remainingAfterDays / 60);
+  const rest = remainingAfterDays % 60;
+  const parts: string[] = [];
+  if (days) parts.push(`${days} day${days === 1 ? "" : "s"}`);
+  if (hours) parts.push(`${hours} hr${hours === 1 ? "" : "s"}`);
+  if (rest) parts.push(`${rest} min`);
+  return parts.join(" ") || `${rounded} min`;
+}
+
+export type DurationUnit = "minutes" | "hours" | "days";
+
+export function durationInputParts(minutes?: number): { value: string; unit: DurationUnit } {
+  if (!minutes || minutes <= 0) return { value: "", unit: "minutes" };
+  if (minutes >= 24 * 60) return { value: String(Number((minutes / (24 * 60)).toFixed(2))), unit: "days" };
+  if (minutes >= 60) return { value: String(Number((minutes / 60).toFixed(2))), unit: "hours" };
+  return { value: String(Math.round(minutes)), unit: "minutes" };
+}
+
+export function durationToMinutes(value: string | number, unit: DurationUnit): number | undefined {
+  const amount = typeof value === "number" ? value : Number(value);
+  if (!Number.isFinite(amount) || amount <= 0) return undefined;
+  const multiplier = unit === "days" ? 24 * 60 : unit === "hours" ? 60 : 1;
+  return Math.max(1, Math.round(amount * multiplier));
 }
 
 export function timeRangeLabel(start?: string, durationMinutes?: number) {
   if (!start) return "";
   if (!durationMinutes) return formatTime(start);
   const startMinutes = minutesFromTime(start) ?? 0;
-  return `${formatTime(start)} - ${formatTime(timeFromMinutes(startMinutes + durationMinutes))}`;
+  const totalEnd = startMinutes + durationMinutes;
+  const dayOffset = Math.floor(totalEnd / (24 * 60));
+  const suffix = dayOffset > 0 ? ` (+${dayOffset}d)` : "";
+  return `${formatTime(start)} - ${formatTime(timeFromMinutes(totalEnd))}${suffix}`;
 }
 
 export function resolvedTimeZone(setting?: string) {

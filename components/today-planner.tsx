@@ -26,9 +26,10 @@ import { HabitModal } from "./habit-modal";
 const HOUR_HEIGHT = 82;
 
 function hourLabel(hour: number) {
-  const date = new Date();
-  date.setHours(hour, 0, 0, 0);
-  return new Intl.DateTimeFormat(undefined, { hour: "numeric" }).format(date);
+  const normalized = ((hour % 24) + 24) % 24;
+  const date = new Date(2020, 0, 1, normalized, 0, 0, 0);
+  const label = new Intl.DateTimeFormat(undefined, { hour: "numeric" }).format(date);
+  return hour >= 24 ? `${label} +1` : label;
 }
 
 function isoParts(value: string, timeZoneSetting: string) {
@@ -77,8 +78,8 @@ export function TodayPlanner() {
   const todayKey = current.dateKey;
   const [selectedDate, setSelectedDate] = useState(todayKey);
   const [filter, setFilter] = useState("all");
-  const [taskModal, setTaskModal] = useState<{ open: boolean; task?: Task | null; time?: string }>({ open: false });
-  const [habitModal, setHabitModal] = useState<{ open: boolean; habit?: Habit | null }>({ open: false });
+  const [taskModal, setTaskModal] = useState<{ open: boolean; task?: Task | null; time?: string; occurrenceDate?: string }>({ open: false });
+  const [habitModal, setHabitModal] = useState<{ open: boolean; habit?: Habit | null; occurrenceDate?: string }>({ open: false });
   const [draggedId, setDraggedId] = useState<string | null>(null);
   const [reviewOpen, setReviewOpen] = useState(false);
   const [reviewTaskIds, setReviewTaskIds] = useState<string[]>([]);
@@ -115,10 +116,42 @@ export function TodayPlanner() {
 
   const filteredTasks = useMemo(() => filter === "all" ? visibleTasks : visibleTasks.filter((task) => task.categoryId === filter), [visibleTasks, filter]);
   const unscheduledTasks = useMemo(() => filteredTasks.filter((task) => !task.scheduledTime).sort((a, b) => (a.order ?? 0) - (b.order ?? 0)), [filteredTasks]);
-  const scheduledTasks = visibleTasks.filter((task) => Boolean(task.scheduledTime));
   const dayHabits = state.habits.filter((habit) => habitOccursOn(habit, selectedDate));
-  const scheduledHabits = dayHabits.filter((habit) => Boolean(habit.scheduledTime));
-  const dayEvents = state.externalEvents.filter((event) => isoParts(event.start, state.settings.timeZone).date === selectedDate);
+  const nextDate = addDays(selectedDate, 1);
+  const nextDayVisibleEndMinutes = state.settings.dayEndHour >= 24 ? ((state.settings.dayEndHour - 24 + 1) * 60) : 0;
+  const sameDayVisibleEndMinutes = state.settings.dayEndHour < 24 ? ((state.settings.dayEndHour + 1) * 60) : 24 * 60;
+  const timelineStartClockMinutes = state.settings.dayStartHour * 60;
+
+  const timelineScheduledTasks = [
+    ...visibleTasks.filter((task) => {
+      const minutes = minutesFromTime(task.scheduledTime);
+      return minutes != null && minutes >= timelineStartClockMinutes && minutes < sameDayVisibleEndMinutes;
+    }).map((task) => ({ task, occurrenceDate: selectedDate })),
+    ...(nextDayVisibleEndMinutes > 0 ? state.tasks.filter((task) => {
+      const minutes = minutesFromTime(task.scheduledTime);
+      return minutes != null && minutes < nextDayVisibleEndMinutes && taskOccursOn(task, nextDate);
+    }).map((task) => ({ task, occurrenceDate: nextDate })) : []),
+  ];
+
+  const timelineScheduledHabits = [
+    ...dayHabits.filter((habit) => {
+      const minutes = minutesFromTime(habit.scheduledTime);
+      return minutes != null && minutes >= timelineStartClockMinutes && minutes < sameDayVisibleEndMinutes;
+    }).map((habit) => ({ habit, occurrenceDate: selectedDate })),
+    ...(nextDayVisibleEndMinutes > 0 ? state.habits.filter((habit) => {
+      const minutes = minutesFromTime(habit.scheduledTime);
+      return minutes != null && minutes < nextDayVisibleEndMinutes && habitOccursOn(habit, nextDate);
+    }).map((habit) => ({ habit, occurrenceDate: nextDate })) : []),
+  ];
+
+  const timelineEvents = state.externalEvents.flatMap((event) => {
+    const startParts = isoParts(event.start, state.settings.timeZone);
+    const minutes = minutesFromTime(startParts.time);
+    if (minutes == null) return [];
+    if (startParts.date === selectedDate && minutes >= timelineStartClockMinutes && minutes < sameDayVisibleEndMinutes) return [{ event, occurrenceDate: selectedDate }];
+    if (nextDayVisibleEndMinutes > 0 && startParts.date === nextDate && minutes < nextDayVisibleEndMinutes) return [{ event, occurrenceDate: nextDate }];
+    return [];
+  });
   const draggedTask = draggedId ? state.tasks.find((task) => task.id === draggedId) : undefined;
 
   const completedTaskCount = visibleTasks.filter((task) => taskIsCompletedOn(task, selectedDate)).length;
@@ -163,8 +196,9 @@ export function TodayPlanner() {
     const y = Math.max(0, Math.min(bounds.height - 1, event.clientY - bounds.top));
     const minutesIntoDay = Math.round((y / HOUR_HEIGHT) * 60 / 15) * 15;
     const maxMinutes = (state.settings.dayEndHour - state.settings.dayStartHour + 1) * 60 - 15;
-    const scheduledMinutes = state.settings.dayStartHour * 60 + Math.max(0, Math.min(maxMinutes, minutesIntoDay));
-    updateTask(draggedId, { dueDate: selectedDate, scheduledTime: timeFromMinutes(scheduledMinutes) });
+    const scheduledAbsoluteMinutes = state.settings.dayStartHour * 60 + Math.max(0, Math.min(maxMinutes, minutesIntoDay));
+    const dayOffset = Math.floor(scheduledAbsoluteMinutes / (24 * 60));
+    updateTask(draggedId, { dueDate: addDays(selectedDate, dayOffset), scheduledTime: timeFromMinutes(scheduledAbsoluteMinutes) });
     setDraggedId(null);
   }
 
@@ -217,20 +251,24 @@ export function TodayPlanner() {
   const timelineStartMinutes = state.settings.dayStartHour * 60;
   const liveNow = zonedNow(state.settings.timeZone);
 
-  function timelineStyle(time?: string, duration = 30) {
-    const minutes = minutesFromTime(time) ?? timelineStartMinutes;
+  function timelineStyle(time?: string, duration = 30, occurrenceDate = selectedDate) {
+    const clockMinutes = minutesFromTime(time) ?? timelineStartMinutes;
+    const dateOffset = occurrenceDate === selectedDate ? 0 : occurrenceDate === nextDate ? 1 : Math.round((parseDateKey(occurrenceDate).getTime() - parseDateKey(selectedDate).getTime()) / 86400000);
+    const minutes = clockMinutes + dateOffset * 24 * 60;
     const top = Math.max(0, ((minutes - timelineStartMinutes) / 60) * HOUR_HEIGHT);
     const height = Math.max(44, (duration / 60) * HOUR_HEIGHT - 4);
     return { top: `${top}px`, minHeight: `${height}px` } as React.CSSProperties;
   }
 
-  function isPast(time?: string, durationMinutes?: number) {
+  function isPast(time?: string, durationMinutes?: number, occurrenceDate = selectedDate) {
     if (!time) return false;
-    if (selectedDate < liveNow.dateKey) return true;
-    if (selectedDate > liveNow.dateKey) return false;
     const start = minutesFromTime(time) ?? 0;
-    const end = start + (durationMinutes ?? 0);
-    return liveNow.minutes >= end;
+    const totalEnd = start + (durationMinutes ?? 0);
+    const endDate = addDays(occurrenceDate, Math.floor(totalEnd / (24 * 60)));
+    const endMinutes = totalEnd % (24 * 60);
+    if (endDate < liveNow.dateKey) return true;
+    if (endDate > liveNow.dateKey) return false;
+    return liveNow.minutes >= endMinutes;
   }
 
   function moveInUnscheduled(taskId: string, list: Task[], direction: -1 | 1) {
@@ -289,30 +327,30 @@ export function TodayPlanner() {
           <div className={`timeline-canvas ${draggedId ? "drop-ready" : ""}`} ref={timelineRef} style={{ height: `${timelineHeight}px`, "--hour-height": `${HOUR_HEIGHT}px` } as React.CSSProperties} onDragOver={(event) => { if (draggedId) event.preventDefault(); }} onDrop={scheduleAtPosition}>
             <div className="timeline-grid" aria-hidden="true">{hours.map((hour) => <div className="timeline-grid-row" key={hour} style={{ height: `${HOUR_HEIGHT}px` }}><time>{hourLabel(hour)}</time><span /></div>)}</div>
             <div className="timeline-events">
-              {dayEvents.map((event) => {
+              {timelineEvents.map(({ event, occurrenceDate }) => {
                 const startParts = isoParts(event.start, state.settings.timeZone);
                 const endParts = isoParts(event.end, state.settings.timeZone);
                 const duration = eventDurationMinutes(event.start, event.end);
                 const past = new Date(event.end).getTime() <= Date.now();
-                return <article className={`timeline-positioned calendar-event positioned-event ${past ? "past-event" : ""}`} key={event.id} style={timelineStyle(startParts.time, duration)}><div className="event-copy"><strong>{event.title}</strong><small>{formatTime(startParts.time)} - {formatTime(endParts.time)}</small></div><div className="event-right-meta">{event.location && <a href={googleMapsUrl(event.location)} target="_blank" rel="noreferrer">⌖ {event.location} ↗</a>}{event.notes && <span>Notes</span>}<small>{event.calendarName ?? "Calendar"}</small></div></article>;
+                return <article className={`timeline-positioned calendar-event positioned-event ${past ? "past-event" : ""}`} key={event.id} style={timelineStyle(startParts.time, duration, occurrenceDate)}><div className="event-copy"><strong>{event.title}</strong><small>{formatTime(startParts.time)} - {formatTime(endParts.time)}</small></div><div className="event-right-meta">{event.location && <a href={googleMapsUrl(event.location)} target="_blank" rel="noreferrer">⌖ {event.location} ↗</a>}{event.notes && <span>Notes</span>}<small>{event.calendarName ?? "Calendar"}</small></div></article>;
               })}
 
-              {scheduledTasks.map((task) => {
-                const completed = taskIsCompletedOn(task, selectedDate);
+              {timelineScheduledTasks.map(({ task, occurrenceDate }) => {
+                const completed = taskIsCompletedOn(task, occurrenceDate);
                 const category = task.categoryId ? categoriesById.get(task.categoryId) : undefined;
                 const visualDuration = task.durationMinutes ?? 30;
-                const past = isPast(task.scheduledTime, task.durationMinutes);
-                return <article className={`timeline-positioned task-event positioned-event ${past && !completed ? "past-event" : ""}`} draggable key={task.id} onDragStart={(event) => { event.stopPropagation(); setDraggedId(task.id); }} onDragEnd={() => setDraggedId(null)} onClick={() => setTaskModal({ open: true, task })} style={{ ...timelineStyle(task.scheduledTime, visualDuration), "--event-color": category?.color ?? "#B29CE4" } as React.CSSProperties}>
-                  <button className="event-check" onClick={(event) => { event.stopPropagation(); toggleTask(task.id, selectedDate); }}>{completed ? "✓" : "○"}</button>
+                const past = isPast(task.scheduledTime, task.durationMinutes, occurrenceDate);
+                return <article className={`timeline-positioned task-event positioned-event ${past && !completed ? "past-event" : ""}`} draggable key={`${task.id}-${occurrenceDate}`} onDragStart={(event) => { event.stopPropagation(); setDraggedId(task.id); }} onDragEnd={() => setDraggedId(null)} onClick={() => setTaskModal({ open: true, task, occurrenceDate })} style={{ ...timelineStyle(task.scheduledTime, visualDuration, occurrenceDate), "--event-color": category?.color ?? "#B29CE4" } as React.CSSProperties}>
+                  <button className="event-check" onClick={(event) => { event.stopPropagation(); toggleTask(task.id, occurrenceDate); }}>{completed ? "✓" : "○"}</button>
                   <span className="event-copy"><strong className={completed || past ? "complete" : ""}>{task.title}</strong><small>{timeRangeLabel(task.scheduledTime, task.durationMinutes)}{task.travelTimeMinutes ? ` · ${task.travelTimeMinutes} min travel` : ""}</small></span>
                   <span className="event-right-meta"><span className="event-duration">{durationLabel(task.durationMinutes)}</span>{task.location && <a href={googleMapsUrl(task.location)} target="_blank" rel="noreferrer" onClick={(event) => event.stopPropagation()}>⌖ {task.location} ↗</a>}{task.notes && <span>Notes</span>}</span>
                 </article>;
               })}
 
-              {scheduledHabits.map((habit) => {
-                const completed = (state.habitCompletions[habit.id] ?? []).includes(selectedDate);
+              {timelineScheduledHabits.map(({ habit, occurrenceDate }) => {
+                const completed = (state.habitCompletions[habit.id] ?? []).includes(occurrenceDate);
                 const visualDuration = habit.durationMinutes ?? 30;
-                return <article className="timeline-positioned habit-event positioned-event" key={habit.id} style={{ ...timelineStyle(habit.scheduledTime, visualDuration), "--habit-color": habit.color ?? "#C9B7F1" } as React.CSSProperties}><button className="event-check" onClick={() => toggleHabit(habit.id, selectedDate)}>{completed ? "✓" : "◇"}</button><button className="event-copy event-copy-button" onClick={() => setHabitModal({ open: true, habit })}><strong className={completed ? "complete" : ""}>{habit.name}</strong><small>{timeRangeLabel(habit.scheduledTime, habit.durationMinutes)} · routine</small></button><span className="event-right-meta"><span className="event-duration">{durationLabel(habit.durationMinutes)}</span></span></article>;
+                return <article className="timeline-positioned habit-event positioned-event" key={`${habit.id}-${occurrenceDate}`} style={{ ...timelineStyle(habit.scheduledTime, visualDuration, occurrenceDate), "--habit-color": habit.color ?? "#C9B7F1" } as React.CSSProperties}><button className="event-check" onClick={() => toggleHabit(habit.id, occurrenceDate)}>{completed ? "✓" : "◇"}</button><button className="event-copy event-copy-button" onClick={() => setHabitModal({ open: true, habit, occurrenceDate })}><strong className={completed ? "complete" : ""}>{habit.name}</strong><small>{timeRangeLabel(habit.scheduledTime, habit.durationMinutes)} · routine</small></button><span className="event-right-meta"><span className="event-duration">{durationLabel(habit.durationMinutes)}</span></span></article>;
               })}
             </div>
             {draggedId && <div className="timeline-drop-overlay"><span>Drop anywhere · snaps to 15 minutes</span></div>}
@@ -321,8 +359,8 @@ export function TodayPlanner() {
       </div>
 
       <button className="mobile-fab" aria-label="Add task" onClick={() => setTaskModal({ open: true })}>＋</button>
-      <TaskModal open={taskModal.open} onClose={() => setTaskModal({ open: false })} task={taskModal.task} defaultDate={selectedDate} defaultTime={taskModal.time} occurrenceDate={selectedDate} />
-      <HabitModal open={habitModal.open} onClose={() => setHabitModal({ open: false })} habit={habitModal.habit} occurrenceDate={selectedDate} />
+      <TaskModal open={taskModal.open} onClose={() => setTaskModal({ open: false })} task={taskModal.task} defaultDate={selectedDate} defaultTime={taskModal.time} occurrenceDate={taskModal.occurrenceDate ?? selectedDate} />
+      <HabitModal open={habitModal.open} onClose={() => setHabitModal({ open: false })} habit={habitModal.habit} occurrenceDate={habitModal.occurrenceDate ?? selectedDate} />
 
       {reviewOpen && reviewTaskIds.length > 0 && <div className="modal-backdrop"><div className="modal-card review-card review-card-bulk">
         <div className="modal-heading"><div><span className="eyebrow">EVENING REVIEW</span><h2>Wrap up your day</h2><p className="subtitle">Select one or more unfinished tasks, then move them together.</p></div><button className="close-button" onClick={finishReview}>×</button></div>
