@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect } from "react";
-import { dateKey, habitOccursOn, minutesFromTime, taskIsCompletedOn, taskOccursOn } from "@/lib/nova/date";
+import { habitOccursOn, minutesFromTime, taskIsCompletedOn, taskOccursOn, zonedNow } from "@/lib/nova/date";
 import { useNova } from "./nova-provider";
 
 export function ReminderWatcher() {
@@ -11,9 +11,9 @@ export function ReminderWatcher() {
     if (!hydrated || !state.settings.notificationsEnabled || typeof Notification === "undefined" || Notification.permission !== "granted") return;
 
     function check() {
-      const now = new Date();
-      const today = dateKey(now);
-      const nowMinutes = now.getHours() * 60 + now.getMinutes();
+      const now = zonedNow(state.settings.timeZone);
+      const today = now.dateKey;
+      const nowMinutes = now.minutes;
 
       state.tasks.filter((task) => task.scheduledTime && task.reminderMinutes != null && taskOccursOn(task, today) && !taskIsCompletedOn(task, today)).forEach((task) => {
         const start = minutesFromTime(task.scheduledTime);
@@ -37,7 +37,7 @@ export function ReminderWatcher() {
         if (nowMinutes < trigger || nowMinutes > trigger + 1) return;
         const key = `nova-notified-habit-${habit.id}-${today}-${trigger}`;
         if (window.localStorage.getItem(key)) return;
-        new Notification(habit.name, { body: "NOVA habit reminder", icon: "/icons/icon-192.png" });
+        new Notification(habit.name, { body: "NOVA routine reminder", icon: "/icons/icon-192.png" });
         window.localStorage.setItem(key, "1");
       });
     }

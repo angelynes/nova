@@ -2,8 +2,9 @@
 
 import { FormEvent, useEffect, useState } from "react";
 import { addDays, dateKey } from "@/lib/nova/date";
+import { THEME_META } from "@/lib/nova/theme";
 import { useNova } from "./nova-provider";
-import type { Habit } from "@/lib/nova/types";
+import type { Habit, HabitSubtask } from "@/lib/nova/types";
 
 const weekdays = [
   [0, "Sun"], [1, "Mon"], [2, "Tue"], [3, "Wed"], [4, "Thu"], [5, "Fri"], [6, "Sat"],
@@ -23,6 +24,9 @@ export function HabitModal({
   const { state, addHabit, updateHabit, deleteHabit } = useNova();
   const [selectedDays, setSelectedDays] = useState<number[]>([]);
   const [deletePrompt, setDeletePrompt] = useState(false);
+  const [subtasks, setSubtasks] = useState<HabitSubtask[]>([]);
+  const [newSubtask, setNewSubtask] = useState("");
+  const [color, setColor] = useState(THEME_META[state.settings.theme].habitColor);
 
   useEffect(() => {
     if (!open) return;
@@ -31,7 +35,10 @@ export function HabitModal({
     else if (habit?.frequency === "weekly") setSelectedDays(habit.weekdays?.length ? habit.weekdays : [new Date().getDay()]);
     else setSelectedDays([0, 1, 2, 3, 4, 5, 6]);
     setDeletePrompt(false);
-  }, [open, habit]);
+    setSubtasks(habit?.subtasks ?? []);
+    setNewSubtask("");
+    setColor(habit?.color ?? THEME_META[state.settings.theme].habitColor);
+  }, [open, habit, state.settings.theme]);
 
   if (!open) return null;
 
@@ -41,18 +48,22 @@ export function HabitModal({
     const name = String(data.get("name") || "").trim();
     if (!name) return;
     if (!selectedDays.length) {
-      alert("Choose at least one day for this habit.");
+      alert("Choose at least one day for this routine.");
       return;
     }
     const reminderRaw = String(data.get("reminderMinutes") || "");
+    const durationRaw = String(data.get("durationMinutes") || "");
     const reminderMinutes = reminderRaw ? Number(reminderRaw) : undefined;
+    const durationMinutes = durationRaw ? Number(durationRaw) : undefined;
     const payload = {
       name,
-      categoryId: String(data.get("categoryId") || "") || undefined,
       frequency: "custom" as const,
       weekdays: selectedDays,
       scheduledTime: String(data.get("scheduledTime") || "") || undefined,
+      durationMinutes: Number.isFinite(durationMinutes) && (durationMinutes ?? 0) > 0 ? durationMinutes : undefined,
       reminderMinutes: Number.isFinite(reminderMinutes) && (reminderMinutes ?? -1) >= 0 ? reminderMinutes : undefined,
+      color,
+      subtasks: subtasks.filter((item) => item.title.trim()).map((item) => ({ ...item, title: item.title.trim() })),
       recurrenceEndDate: habit?.recurrenceEndDate,
       excludedDates: habit?.excludedDates ?? [],
       active: true,
@@ -64,6 +75,13 @@ export function HabitModal({
 
   function toggleDay(day: number) {
     setSelectedDays((days) => days.includes(day) ? days.filter((item) => item !== day) : [...days, day].sort());
+  }
+
+  function addSubtask() {
+    const title = newSubtask.trim();
+    if (!title) return;
+    setSubtasks((current) => [...current, { id: crypto.randomUUID(), title }]);
+    setNewSubtask("");
   }
 
   function deleteThisOccurrence() {
@@ -82,35 +100,29 @@ export function HabitModal({
 
   return (
     <div className="modal-backdrop" role="presentation" onMouseDown={onClose}>
-      <form className="modal-card" onSubmit={submit} onMouseDown={(e) => e.stopPropagation()}>
-        <div className="modal-heading">
-          <div><span className="eyebrow">HABIT</span><h2>{habit ? "Edit habit" : "Add habit"}</h2></div>
-          <button type="button" className="close-button" onClick={onClose}>×</button>
-        </div>
-        <label className="field full-field"><span>Name</span><input name="name" defaultValue={habit?.name ?? ""} autoFocus required placeholder="e.g. Read 20 minutes" /></label>
+      <form className="modal-card habit-composer" onSubmit={submit} onMouseDown={(e) => e.stopPropagation()}>
+        <div className="modal-heading"><div><span className="eyebrow">ROUTINE</span><h2>{habit ? "Edit routine" : "Add routine"}</h2></div><button type="button" className="close-button" onClick={onClose}>×</button></div>
+        <label className="field full-field"><span>Routine name</span><input name="name" defaultValue={habit?.name ?? ""} autoFocus required placeholder="e.g. Morning Routine" /></label>
+
         <div className="form-grid two">
-          <label className="field"><span>Category</span><select name="categoryId" defaultValue={habit?.categoryId ?? state.categories[0]?.id ?? ""}><option value="">No category</option>{state.categories.map((category) => <option key={category.id} value={category.id}>{category.name}</option>)}</select></label>
           <label className="field"><span>Time</span><input name="scheduledTime" type="time" defaultValue={habit?.scheduledTime ?? ""} /></label>
+          <label className="field"><span>Duration</span><select name="durationMinutes" defaultValue={habit?.durationMinutes ? String(habit.durationMinutes) : ""}><option value="">No duration</option><option value="15">15 minutes</option><option value="30">30 minutes</option><option value="45">45 minutes</option><option value="60">1 hour</option><option value="90">1.5 hours</option><option value="120">2 hours</option></select></label>
           <label className="field"><span>Reminder</span><select name="reminderMinutes" defaultValue={habit?.reminderMinutes == null ? "" : String(habit.reminderMinutes)}><option value="">No reminder</option><option value="0">At start</option><option value="5">5 minutes before</option><option value="10">10 minutes before</option><option value="30">30 minutes before</option><option value="60">1 hour before</option></select></label>
+          <label className="field"><span>Habit color</span><div className="habit-color-control"><input type="color" value={color} onChange={(event) => setColor(event.target.value)} /><span style={{ background: color }} /></div></label>
         </div>
-        <div className="field full-field repeat-days-field"><span>Repeat on</span><div className="weekday-picker">{weekdays.map(([day, label]) => <label key={day}><input type="checkbox" checked={selectedDays.includes(day)} onChange={() => toggleDay(day)} /><span>{label}</span></label>)}</div><small className="field-help">Choose exactly the days this habit should appear. This replaces the old separate frequency + custom-days controls.</small></div>
+
+        <div className="field full-field repeat-days-field"><span>Repeat on</span><div className="weekday-picker">{weekdays.map(([day, label]) => <label key={day}><input type="checkbox" checked={selectedDays.includes(day)} onChange={() => toggleDay(day)} /><span>{label}</span></label>)}</div><small className="field-help">Select every day for a daily routine, or pick only the days you want.</small></div>
+
+        <div className="habit-subtask-editor">
+          <div className="habit-subtask-heading"><div><span className="eyebrow">CHECKLIST</span><strong>Routine items</strong></div><small>{subtasks.length} item{subtasks.length === 1 ? "" : "s"}</small></div>
+          {subtasks.map((subtask, index) => <div className="habit-subtask-edit-row" key={subtask.id}><span>{index + 1}</span><input value={subtask.title} onChange={(event) => setSubtasks((items) => items.map((item) => item.id === subtask.id ? { ...item, title: event.target.value } : item))} /><button type="button" className="icon-control" onClick={() => setSubtasks((items) => items.filter((item) => item.id !== subtask.id))}>×</button></div>)}
+          <div className="habit-subtask-add-row"><input value={newSubtask} onChange={(event) => setNewSubtask(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); addSubtask(); } }} placeholder="Add an item, e.g. Vitamins" /><button type="button" className="soft-button" onClick={addSubtask}>Add</button></div>
+        </div>
 
         {deletePrompt && habit ? (
-          <div className="delete-choice-panel">
-            <strong>Delete repeating habit</strong>
-            <p>Choose whether to skip only this occurrence or stop the habit from this date forward.</p>
-            <div className="delete-choice-actions">
-              <button type="button" className="soft-button" onClick={deleteThisOccurrence}>Delete this event only</button>
-              <button type="button" className="soft-button" onClick={deleteFuture}>Delete this & future</button>
-              <button type="button" className="danger-button" onClick={() => { deleteHabit(habit.id); onClose(); }}>Delete entire habit</button>
-              <button type="button" className="ghost-button" onClick={() => setDeletePrompt(false)}>Cancel</button>
-            </div>
-          </div>
+          <div className="delete-choice-panel"><strong>Delete repeating routine</strong><p>Choose whether to skip only this occurrence or stop the routine from this date forward.</p><div className="delete-choice-actions"><button type="button" className="soft-button" onClick={deleteThisOccurrence}>Delete this event only</button><button type="button" className="soft-button" onClick={deleteFuture}>Delete this & future</button><button type="button" className="danger-button" onClick={() => { deleteHabit(habit.id); onClose(); }}>Delete entire routine</button><button type="button" className="ghost-button" onClick={() => setDeletePrompt(false)}>Cancel</button></div></div>
         ) : (
-          <div className="modal-actions">
-            {habit ? <button type="button" className="danger-button" onClick={() => setDeletePrompt(true)}>Delete</button> : <span />}
-            <button className="primary-button" type="submit">{habit ? "Save habit" : "Add habit"}</button>
-          </div>
+          <div className="modal-actions">{habit ? <button type="button" className="danger-button" onClick={() => setDeletePrompt(true)}>Delete</button> : <span />}<button className="primary-button" type="submit">{habit ? "Save routine" : "Add routine"}</button></div>
         )}
       </form>
     </div>

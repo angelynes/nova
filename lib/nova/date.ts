@@ -59,10 +59,61 @@ export function minutesFromTime(value?: string) {
 }
 
 export function timeFromMinutes(total: number) {
-  const clamped = Math.max(0, Math.min(23 * 60 + 59, Math.round(total)));
-  const hours = Math.floor(clamped / 60);
-  const minutes = clamped % 60;
+  const normalized = ((Math.round(total) % (24 * 60)) + 24 * 60) % (24 * 60);
+  const hours = Math.floor(normalized / 60);
+  const minutes = normalized % 60;
   return `${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}`;
+}
+
+export function durationLabel(minutes?: number) {
+  if (!minutes) return "No duration";
+  if (minutes < 60) return `${minutes} min`;
+  const hours = Math.floor(minutes / 60);
+  const rest = minutes % 60;
+  if (!rest) return `${hours} hr${hours === 1 ? "" : "s"}`;
+  return `${hours} hr ${rest} min`;
+}
+
+export function timeRangeLabel(start?: string, durationMinutes?: number) {
+  if (!start) return "";
+  if (!durationMinutes) return formatTime(start);
+  const startMinutes = minutesFromTime(start) ?? 0;
+  return `${formatTime(start)} - ${formatTime(timeFromMinutes(startMinutes + durationMinutes))}`;
+}
+
+export function resolvedTimeZone(setting?: string) {
+  if (!setting || setting === "auto") {
+    return Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
+  }
+  return setting;
+}
+
+export function zonedNow(timeZoneSetting?: string, now = new Date()) {
+  const timeZone = resolvedTimeZone(timeZoneSetting);
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23",
+  }).formatToParts(now);
+  const get = (type: Intl.DateTimeFormatPartTypes) => Number(parts.find((part) => part.type === type)?.value ?? 0);
+  const year = get("year");
+  const month = get("month");
+  const day = get("day");
+  const hour = get("hour");
+  const minute = get("minute");
+  return {
+    dateKey: `${String(year).padStart(4, "0")}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`,
+    minutes: hour * 60 + minute,
+    timeZone,
+  };
+}
+
+export function googleMapsUrl(location: string) {
+  return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(location)}`;
 }
 
 export function taskOccursOn(task: Task, targetDate: string) {
@@ -105,8 +156,6 @@ export function habitOccursOn(habit: Habit, targetDate: string) {
   if (habit.recurrenceEndDate && targetDate > habit.recurrenceEndDate) return false;
   const day = parseDateKey(targetDate).getDay();
 
-  // New NOVA habits use a single day-of-week picker. This also makes old
-  // frequency-based habits backwards compatible without showing redundant UI.
   if (habit.weekdays?.length) return habit.weekdays.includes(day);
 
   switch (habit.frequency) {
