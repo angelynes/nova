@@ -4,7 +4,7 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useRef, use
 import type { Provider, Session, SupabaseClient } from "@supabase/supabase-js";
 import { createClient, hasSupabaseConfig } from "@/lib/supabase/client";
 import { createSeedState } from "@/lib/nova/seed";
-import { dateKey, taskIsCompletedOn } from "@/lib/nova/date";
+import { dateKey, minutesFromTime, taskIsCompletedOn, taskOccursOn, zonedNow } from "@/lib/nova/date";
 import type {
   Category,
   ExternalCalendarEvent,
@@ -76,6 +76,10 @@ const LEGACY_DEMO_TASK_IDS = new Set(["task-1", "task-2", "task-3", "task-4", "t
 const LEGACY_DEMO_PROJECT_IDS = new Set(["project-nova", "project-thesis", "project-trip"]);
 const LEGACY_DEMO_HABIT_IDS = new Set(["habit-1", "habit-2", "habit-3"]);
 const VALID_THEMES = new Set<ThemeId>(["lavender", "neutral", "blush", "aqua"]);
+const LEGACY_PROJECT_DESCRIPTIONS = new Set([
+  "an all-in-one planner, with day-to-day tasks and project manager",
+  "an all-in-one planner with day-to-day tasks and project manager",
+]);
 
 function removeLegacyDemoData(state: NovaState): NovaState {
   const categories = state.categories.filter((category) => category.id !== "cat-project");
@@ -124,7 +128,9 @@ function normalizeState(input: unknown): NovaState | null {
       const migratedUpdate = !existingUpdates.length && project.notes?.trim()
         ? [{ id: crypto.randomUUID(), text: project.notes.trim(), createdAt: project.createdAt ?? new Date().toISOString() }]
         : [];
-      return { ...project, updates: existingUpdates.length ? existingUpdates : migratedUpdate };
+      const description = project.description?.trim();
+      const cleanedDescription = description && !LEGACY_PROJECT_DESCRIPTIONS.has(description.toLowerCase()) ? description : undefined;
+      return { ...project, description: cleanedDescription, updates: existingUpdates.length ? existingUpdates : migratedUpdate };
     }),
     categories: state.categories,
     habits: Array.isArray(state.habits)
@@ -305,6 +311,44 @@ export function NovaProvider({ children }: { children: React.ReactNode }) {
     stateRef.current = next;
     setState(next);
   }, []);
+
+  // Scheduled tasks complete automatically once their scheduled end time has passed.
+  // Habits/routines are intentionally excluded: they always require a manual check.
+  useEffect(() => {
+    if (!hydrated) return;
+
+    const completePassedTasks = () => {
+      const now = zonedNow(stateRef.current.settings.timeZone);
+      const completedAt = new Date().toISOString();
+      let changed = false;
+
+      const tasks = stateRef.current.tasks.map((task) => {
+        if (!task.scheduledTime) return task;
+        const start = minutesFromTime(task.scheduledTime);
+        if (start == null) return task;
+        const end = start + (task.durationMinutes ?? 0);
+
+        if (task.recurrence !== "none") {
+          if (!taskOccursOn(task, now.dateKey) || taskIsCompletedOn(task, now.dateKey) || now.minutes < end) return task;
+          changed = true;
+          return { ...task, completedDates: [...new Set([...(task.completedDates ?? []), now.dateKey])], updatedAt: completedAt };
+        }
+
+        if (taskIsCompletedOn(task, task.dueDate ?? now.dateKey)) return task;
+        const taskDate = task.dueDate ?? now.dateKey;
+        const hasPassed = taskDate < now.dateKey || (taskDate === now.dateKey && now.minutes >= end);
+        if (!hasPassed) return task;
+        changed = true;
+        return { ...task, status: "completed" as const, completedAt, updatedAt: completedAt };
+      });
+
+      if (changed) mutate((current) => ({ ...current, tasks }));
+    };
+
+    completePassedTasks();
+    const timer = window.setInterval(completePassedTasks, 30_000);
+    return () => window.clearInterval(timer);
+  }, [hydrated, mutate]);
 
   const addTask = useCallback((task: Omit<Task, "id" | "createdAt" | "updatedAt">) => {
     const id = crypto.randomUUID();

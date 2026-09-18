@@ -33,8 +33,15 @@ async function imageFileToAvatar(file: File) {
         const crop = Math.min(image.width, image.height);
         const sx = (image.width - crop) / 2;
         const sy = (image.height - crop) / 2;
+        context.clearRect(0, 0, size, size);
+        context.save();
+        context.beginPath();
+        context.arc(size / 2, size / 2, size / 2, 0, Math.PI * 2);
+        context.closePath();
+        context.clip();
         context.drawImage(image, sx, sy, crop, crop, 0, 0, size, size);
-        resolve(canvas.toDataURL("image/jpeg", 0.82));
+        context.restore();
+        resolve(canvas.toDataURL("image/png"));
       };
       image.src = String(reader.result);
     };
