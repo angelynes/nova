@@ -34,6 +34,7 @@ type NovaContextValue = {
   deleteTask: (id: string) => void;
   reorderTask: (draggedId: string, targetId: string) => void;
   toggleTask: (id: string, onDate?: string) => void;
+  toggleTaskSubtask: (taskId: string, subtaskId: string, onDate?: string) => void;
   setTaskStatus: (id: string, status: TaskStatus) => void;
   addProject: (project: Omit<Project, "id" | "createdAt">) => string;
   updateProject: (id: string, patch: Partial<Project>) => void;
@@ -104,9 +105,10 @@ function removeLegacyDemoData(state: NovaState): NovaState {
   const habits = state.habits.filter((habit) => !LEGACY_DEMO_HABIT_IDS.has(habit.id));
   const habitCompletions = Object.fromEntries(Object.entries(state.habitCompletions).filter(([habitId]) => !LEGACY_DEMO_HABIT_IDS.has(habitId)));
   const habitSubtaskCompletions = Object.fromEntries(Object.entries(state.habitSubtaskCompletions).filter(([habitId]) => !LEGACY_DEMO_HABIT_IDS.has(habitId)));
+  const taskSubtaskCompletions = Object.fromEntries(Object.entries(state.taskSubtaskCompletions ?? {}).filter(([taskId]) => !LEGACY_DEMO_TASK_IDS.has(taskId)));
   const externalEvents = state.externalEvents.filter((event) => event.source !== "sample");
 
-  return { ...state, version: 5, categories, projects, tasks, habits, habitCompletions, habitSubtaskCompletions, externalEvents };
+  return { ...state, version: 6, categories, projects, tasks, habits, habitCompletions, habitSubtaskCompletions, taskSubtaskCompletions, externalEvents };
 }
 
 function normalizeState(input: unknown): NovaState | null {
@@ -128,9 +130,10 @@ function normalizeState(input: unknown): NovaState | null {
   const normalized: NovaState = {
     ...base,
     ...state,
-    version: 5,
+    version: 6,
     tasks: state.tasks.map((task, index) => ({
       ...task,
+      subtasks: task.subtasks ?? [],
       recurrence: task.recurrence ?? "none",
       order: typeof task.order === "number" ? task.order : index,
       excludedDates: task.excludedDates ?? [],
@@ -159,6 +162,7 @@ function normalizeState(input: unknown): NovaState | null {
       : [],
     habitCompletions: state.habitCompletions ?? {},
     habitSubtaskCompletions: state.habitSubtaskCompletions ?? {},
+    taskSubtaskCompletions: state.taskSubtaskCompletions ?? {},
     externalEvents: Array.isArray(state.externalEvents) ? state.externalEvents : [],
     settings,
     lastUpdatedAt: state.lastUpdatedAt ?? new Date().toISOString(),
@@ -344,6 +348,7 @@ export function NovaProvider({ children }: { children: React.ReactNode }) {
       const now = zonedNow(stateRef.current.settings.timeZone);
       const completedAt = new Date().toISOString();
       let changed = false;
+      const autoCompletedSubtasks: Array<{ taskId: string; key: string; ids: string[] }> = [];
 
       const tasks = stateRef.current.tasks.map((task) => {
         if (!task.scheduledTime) return task;
@@ -360,6 +365,7 @@ export function NovaProvider({ children }: { children: React.ReactNode }) {
             if (!taskOccursOn(task, occurrenceDate) || completedDates.has(occurrenceDate)) continue;
             if (occurrenceHasEnded(occurrenceDate, start, duration, now.dateKey, now.minutes)) {
               completedDates.add(occurrenceDate);
+              autoCompletedSubtasks.push({ taskId: task.id, key: occurrenceDate, ids: (task.subtasks ?? []).map((subtask) => subtask.id) });
               taskChanged = true;
             }
           }
@@ -371,11 +377,18 @@ export function NovaProvider({ children }: { children: React.ReactNode }) {
         if (taskIsCompletedOn(task, task.dueDate ?? now.dateKey)) return task;
         const occurrenceDate = task.dueDate ?? now.dateKey;
         if (!occurrenceHasEnded(occurrenceDate, start, duration, now.dateKey, now.minutes)) return task;
+        autoCompletedSubtasks.push({ taskId: task.id, key: "__task", ids: (task.subtasks ?? []).map((subtask) => subtask.id) });
         changed = true;
         return { ...task, status: "completed" as const, completedAt, updatedAt: completedAt };
       });
 
-      if (changed) mutate((current) => ({ ...current, tasks }));
+      if (changed) mutate((current) => {
+        const taskSubtaskCompletions = { ...current.taskSubtaskCompletions };
+        autoCompletedSubtasks.forEach(({ taskId, key, ids }) => {
+          taskSubtaskCompletions[taskId] = { ...(taskSubtaskCompletions[taskId] ?? {}), [key]: ids };
+        });
+        return { ...current, tasks, taskSubtaskCompletions };
+      });
     };
 
     completePassedTasks();
@@ -397,7 +410,12 @@ export function NovaProvider({ children }: { children: React.ReactNode }) {
     mutate((current) => ({ ...current, tasks: current.tasks.map((task) => task.id === id ? { ...task, ...patch, updatedAt: new Date().toISOString() } : task) }));
   }, [mutate]);
 
-  const deleteTask = useCallback((id: string) => { mutate((current) => ({ ...current, tasks: current.tasks.filter((task) => task.id !== id) })); }, [mutate]);
+  const deleteTask = useCallback((id: string) => {
+    mutate((current) => {
+      const { [id]: _subtasks, ...taskSubtaskCompletions } = current.taskSubtaskCompletions;
+      return { ...current, tasks: current.tasks.filter((task) => task.id !== id), taskSubtaskCompletions };
+    });
+  }, [mutate]);
 
   const reorderTask = useCallback((draggedId: string, targetId: string) => {
     if (draggedId === targetId) return;
@@ -414,22 +432,73 @@ export function NovaProvider({ children }: { children: React.ReactNode }) {
   }, [mutate]);
 
   const toggleTask = useCallback((id: string, onDate = dateKey()) => {
-    mutate((current) => ({
-      ...current,
-      tasks: current.tasks.map((task) => {
-        if (task.id !== id) return task;
-        if (task.recurrence !== "none") {
-          const completedDates = new Set(task.completedDates ?? []);
-          if (completedDates.has(onDate)) completedDates.delete(onDate); else completedDates.add(onDate);
-          return { ...task, completedDates: [...completedDates], updatedAt: new Date().toISOString() };
-        }
-        const complete = !taskIsCompletedOn(task, onDate);
-        return { ...task, status: complete ? "completed" : "todo", completedAt: complete ? new Date().toISOString() : undefined, updatedAt: new Date().toISOString() };
-      }),
-    }));
+    mutate((current) => {
+      const task = current.tasks.find((item) => item.id === id);
+      if (!task) return current;
+      const updatedAt = new Date().toISOString();
+      const taskMap = { ...(current.taskSubtaskCompletions[id] ?? {}) };
+
+      if (task.recurrence !== "none") {
+        const completedDates = new Set(task.completedDates ?? []);
+        const complete = !completedDates.has(onDate);
+        if (complete) completedDates.add(onDate); else completedDates.delete(onDate);
+        taskMap[onDate] = complete ? (task.subtasks ?? []).map((subtask) => subtask.id) : [];
+        return {
+          ...current,
+          tasks: current.tasks.map((item) => item.id === id ? { ...item, completedDates: [...completedDates], updatedAt } : item),
+          taskSubtaskCompletions: { ...current.taskSubtaskCompletions, [id]: taskMap },
+        };
+      }
+
+      const complete = !taskIsCompletedOn(task, onDate);
+      taskMap.__task = complete ? (task.subtasks ?? []).map((subtask) => subtask.id) : [];
+      return {
+        ...current,
+        tasks: current.tasks.map((item) => item.id === id ? { ...item, status: complete ? "completed" as const : "todo" as const, completedAt: complete ? updatedAt : undefined, updatedAt } : item),
+        taskSubtaskCompletions: { ...current.taskSubtaskCompletions, [id]: taskMap },
+      };
+    });
   }, [mutate]);
 
-  const setTaskStatus = useCallback((id: string, status: TaskStatus) => { updateTask(id, { status, completedAt: status === "completed" ? new Date().toISOString() : undefined }); }, [updateTask]);
+  const toggleTaskSubtask = useCallback((taskId: string, subtaskId: string, onDate = dateKey()) => {
+    mutate((current) => {
+      const task = current.tasks.find((item) => item.id === taskId);
+      if (!task) return current;
+      const subtasks = task.subtasks ?? [];
+      const key = task.recurrence === "none" ? "__task" : onDate;
+      const taskMap = { ...(current.taskSubtaskCompletions[taskId] ?? {}) };
+      const done = new Set(taskMap[key] ?? []);
+      if (done.has(subtaskId)) done.delete(subtaskId); else done.add(subtaskId);
+      taskMap[key] = [...done];
+      const allDone = subtasks.length > 0 && subtasks.every((subtask) => done.has(subtask.id));
+      const updatedAt = new Date().toISOString();
+      const tasks = current.tasks.map((item) => {
+        if (item.id !== taskId) return item;
+        if (item.recurrence !== "none") {
+          const completedDates = new Set(item.completedDates ?? []);
+          if (allDone) completedDates.add(onDate); else completedDates.delete(onDate);
+          return { ...item, completedDates: [...completedDates], updatedAt };
+        }
+        return { ...item, status: allDone ? "completed" as const : (item.status === "completed" ? "todo" as const : item.status), completedAt: allDone ? updatedAt : undefined, updatedAt };
+      });
+      return { ...current, tasks, taskSubtaskCompletions: { ...current.taskSubtaskCompletions, [taskId]: taskMap } };
+    });
+  }, [mutate]);
+
+  const setTaskStatus = useCallback((id: string, status: TaskStatus) => {
+    mutate((current) => {
+      const task = current.tasks.find((item) => item.id === id);
+      if (!task) return current;
+      const updatedAt = new Date().toISOString();
+      const taskMap = { ...(current.taskSubtaskCompletions[id] ?? {}) };
+      if (status === "completed" && task.recurrence === "none") taskMap.__task = (task.subtasks ?? []).map((subtask) => subtask.id);
+      return {
+        ...current,
+        tasks: current.tasks.map((item) => item.id === id ? { ...item, status, completedAt: status === "completed" ? updatedAt : undefined, updatedAt } : item),
+        taskSubtaskCompletions: { ...current.taskSubtaskCompletions, [id]: taskMap },
+      };
+    });
+  }, [mutate]);
 
   const addProject = useCallback((project: Omit<Project, "id" | "createdAt">) => {
     const id = crypto.randomUUID();
@@ -634,14 +703,14 @@ export function NovaProvider({ children }: { children: React.ReactNode }) {
   }, [clearImportedEvents]);
 
   const value = useMemo<NovaContextValue>(() => ({
-    state, hydrated, addTask, updateTask, deleteTask, reorderTask, toggleTask, setTaskStatus,
+    state, hydrated, addTask, updateTask, deleteTask, reorderTask, toggleTask, toggleTaskSubtask, setTaskStatus,
     addProject, updateProject, deleteProject, addCategory, updateCategory, deleteCategory, reorderCategory,
     addHabit, updateHabit, deleteHabit, toggleHabit, toggleHabitSubtask, importExternalEvents, clearImportedEvents,
     updateSettings, importState, resetState, cloudConfigured, cloudStatus, cloudEmail: session?.user.email ?? null,
     sendMagicLink, verifyEmailOtp, signInWithProvider, signOutCloud, syncNow,
     googleCalendarConnected, connectGoogleCalendar, syncGoogleCalendar, disconnectGoogleCalendar,
   }), [
-    state, hydrated, addTask, updateTask, deleteTask, reorderTask, toggleTask, setTaskStatus,
+    state, hydrated, addTask, updateTask, deleteTask, reorderTask, toggleTask, toggleTaskSubtask, setTaskStatus,
     addProject, updateProject, deleteProject, addCategory, updateCategory, deleteCategory, reorderCategory,
     addHabit, updateHabit, deleteHabit, toggleHabit, toggleHabitSubtask, importExternalEvents, clearImportedEvents,
     updateSettings, importState, resetState, cloudConfigured, cloudStatus, session,

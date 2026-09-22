@@ -27,10 +27,16 @@ export type Project = {
   createdAt: string;
 };
 
+export type TaskSubtask = {
+  id: string;
+  title: string;
+};
+
 export type Task = {
   id: string;
   title: string;
   notes?: string;
+  subtasks?: TaskSubtask[];
   categoryId?: string;
   projectId?: string;
   status: TaskStatus;
@@ -106,7 +112,7 @@ export type NovaSettings = {
 };
 
 export type NovaState = {
-  version: 5;
+  version: 6;
   categories: Category[];
   projects: Project[];
   tasks: Task[];
@@ -114,6 +120,8 @@ export type NovaState = {
   habitCompletions: Record<string, string[]>;
   /** habit id -> date key -> completed subtask ids */
   habitSubtaskCompletions: Record<string, Record<string, string[]>>;
+  /** task id -> occurrence key -> completed subtask ids. Non-recurring tasks use __task. */
+  taskSubtaskCompletions: Record<string, Record<string, string[]>>;
   externalEvents: ExternalCalendarEvent[];
   settings: NovaSettings;
   lastUpdatedAt: string;

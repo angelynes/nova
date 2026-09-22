@@ -8,9 +8,9 @@ NOVA currently runs as a responsive web app / PWA and is optimized for both lapt
 
 ---
 
-## Current build: V1.2.2
+## Current build: V1.2.4
 
-This version includes the September 17 planning, personalization, and behavior updates.
+This version includes the September 17–21 planning, personalization, behavior, category-palette, project-backlog, and task-checklist updates.
 
 ### Today
 
@@ -18,6 +18,8 @@ This version includes the September 17 planning, personalization, and behavior u
   - desktop: unscheduled tasks on the left, schedule timeline on the right
   - mobile: unscheduled tasks first, followed by a vertical Hobonichi-style timeline
 - Tasks can belong to both a **category** and a **project**
+- Tasks can contain customizable **subtasks/checklists**
+- Checking all subtasks completes the parent task; reopening a subtask reopens the parent task
 - Unscheduled tasks can be reordered
 - Tasks can be dragged into the schedule
 - Scheduled tasks can be moved back to Unscheduled
@@ -54,6 +56,7 @@ This version includes the September 17 planning, personalization, and behavior u
   - keep selected tasks overdue
 - Task Status only appears when a Project is selected
 - Project task status defaults to **To Do**
+- Project tasks can be left **Undated**, so they stay in the project backlog and do not appear on Today until a date is assigned
 - NOVA uses its own selected time zone for schedule behavior and automatic completion
 
 ---
@@ -140,6 +143,9 @@ Mobile:
 
 Project features include:
 
+- manual task ordering inside each Kanban status (drag-and-drop on desktop, arrows on mobile)
+- undated project backlog tasks
+- task subtasks/checklists with progress
 - project description
 - project color
 - progress tracking
@@ -179,7 +185,7 @@ Users can:
 - choose category colors
 - reorder categories
 - delete categories
-- use suggested palettes based on the selected NOVA theme
+- choose from NOVA's five pastel category presets: Blush Sky (`#FFD1DC`), Sage Mist (`#CFD8C5`), Peach Sorbet (`#FFE4E1`), Lavender Dusk (`#D8BFD8`), and Mint Frost (`#E0F7FA`)
 - still use a fully custom color picker
 
 ---
@@ -274,7 +280,7 @@ Planner state is stored in:
 public.app_state
 ```
 
-The app currently stores planner data in the existing JSON state row, so V1.2.2 does not require a new database migration.
+The app currently stores planner data in the existing JSON state row, so V1.2.4 does not require a new database migration.
 
 Cloud sync is intended to keep the same NOVA account consistent across:
 

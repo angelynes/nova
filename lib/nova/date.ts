@@ -144,7 +144,9 @@ export function googleMapsUrl(location: string) {
 export function taskOccursOn(task: Task, targetDate: string) {
   if (task.excludedDates?.includes(targetDate)) return false;
   if (task.recurrenceEndDate && targetDate > task.recurrenceEndDate) return false;
-  if (!task.dueDate) return task.recurrence === "none" ? targetDate === dateKey() : false;
+  // Undated one-off tasks belong to their project/backlog only. They should not
+  // silently appear on Today until the user assigns a date.
+  if (!task.dueDate) return false;
   if (targetDate < task.dueDate) return false;
   const base = parseDateKey(task.dueDate);
   const target = parseDateKey(targetDate);

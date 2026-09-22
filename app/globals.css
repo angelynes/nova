@@ -848,3 +848,46 @@ html[data-theme="aqua"] body { background:radial-gradient(circle at 78% 0%,rgba(
 .duration-input-row input, .duration-input-row select { min-width:0; }
 .modal-secondary-actions { display:flex; gap:7px; align-items:center; }
 @media (max-width:560px) { .duration-input-row { grid-template-columns:minmax(0,1fr) 94px; } .modal-secondary-actions { flex-wrap:wrap; } }
+
+/* V1.2.4 — task subtasks, undated project backlog, project task ordering */
+.date-input-row { display:grid; grid-template-columns:minmax(0,1fr) auto; gap:8px; align-items:center; }
+.date-input-row .tiny-button.active { background:var(--primary-soft,#eee8f7); color:var(--primary); border-color:color-mix(in srgb,var(--primary) 24%,transparent); }
+.task-subtask-editor { margin-top:15px; border:1px solid var(--line); border-radius:15px; padding:13px; background:rgba(255,255,255,.55); }
+.task-subtask-heading { display:flex; justify-content:space-between; align-items:center; margin-bottom:8px; }
+.task-subtask-heading > div { display:grid; gap:2px; }
+.task-subtask-heading strong { font-size:12px; color:var(--primary); }
+.task-subtask-heading small { color:#9a92a4; font-size:9px; }
+.task-subtask-edit-row { display:grid; grid-template-columns:20px minmax(0,1fr) 34px; align-items:center; gap:7px; margin-top:6px; }
+.task-subtask-edit-row > span { color:#aaa1b0; font-size:9px; text-align:center; }
+.task-subtask-edit-row input, .task-subtask-add-row input { min-height:38px; border:1px solid #ded8e4; border-radius:10px; padding:0 10px; background:white; color:var(--text); }
+.task-subtask-edit-row .icon-control { width:32px; height:32px; }
+.task-subtask-add-row { display:grid; grid-template-columns:minmax(0,1fr) auto; gap:8px; margin-top:9px; }
+.task-item-stack { border-bottom:1px solid var(--line); }
+.task-item-stack .task-row { border-bottom:0; }
+.task-subtasks-inline { display:grid; gap:4px; padding:0 16px 10px 66px; }
+.task-subtask-inline { min-height:27px; display:flex; align-items:center; gap:7px; border:0; background:transparent; padding:2px 0; cursor:pointer; text-align:left; }
+.task-subtask-inline > span { width:16px; height:16px; display:grid; place-items:center; border:1px solid #d6cfde; border-radius:5px; background:white; color:white; font-size:8px; }
+.task-subtask-inline.done > span { background:var(--primary); border-color:var(--primary); }
+.task-subtask-inline small { color:#777080; font-size:9px; }
+.task-subtask-inline.done small { text-decoration:line-through; color:#aaa2ad; }
+.project-backlog-note { display:flex; align-items:flex-start; gap:10px; margin:0 0 14px; padding:11px 13px; border:1px solid var(--line); border-radius:13px; background:color-mix(in srgb,var(--primary-soft,#eee8f7) 55%,white); }
+.project-backlog-note strong { flex:0 0 auto; color:var(--primary); font-size:10px; }
+.project-backlog-note span { color:#82798b; font-size:10px; line-height:1.45; }
+.kanban-card-date { display:flex; align-items:center; justify-content:flex-end; min-height:18px; }
+.undated-badge { display:inline-flex; align-items:center; min-height:20px; padding:0 7px; border-radius:999px; background:#f3f0f5; color:#9a919f; font-size:8px; font-weight:650; }
+.kanban-subtasks { display:grid; gap:4px; margin-top:10px; padding-top:8px; border-top:1px solid var(--line); }
+.kanban-subtask { display:flex; align-items:center; gap:7px; border:0; background:transparent; padding:2px 0; text-align:left; cursor:pointer; }
+.kanban-subtask > span { width:15px; height:15px; display:grid; place-items:center; border:1px solid #d6cfde; border-radius:5px; background:white; color:white; font-size:8px; }
+.kanban-subtask.done > span { background:var(--primary); border-color:var(--primary); }
+.kanban-subtask small { color:#7e7685; font-size:9px; line-height:1.3; }
+.kanban-subtask.done small { text-decoration:line-through; color:#aaa2ad; }
+.kanban-reorder { display:flex; align-items:center; gap:5px; margin-top:9px; padding-top:8px; border-top:1px dashed #e4dfea; }
+.kanban-reorder button { width:25px; height:25px; border:1px solid #e0d9e7; border-radius:8px; background:white; color:var(--primary); cursor:pointer; }
+.kanban-reorder button:disabled { opacity:.3; cursor:not-allowed; }
+.kanban-reorder span { margin-left:3px; color:#aaa2ad; font-size:8px; }
+
+@media (max-width: 760px) {
+  .task-subtasks-inline { padding-left:49px; padding-right:12px; }
+  .project-backlog-note { display:grid; gap:4px; }
+  .kanban-reorder span { display:none; }
+}

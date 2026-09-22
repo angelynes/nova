@@ -71,7 +71,7 @@ function recurringLabel(task: Task) {
 }
 
 export function TodayPlanner() {
-  const { state, hydrated, toggleTask, updateTask, reorderTask, toggleHabit, toggleHabitSubtask } = useNova();
+  const { state, hydrated, toggleTask, toggleTaskSubtask, updateTask, reorderTask, toggleHabit, toggleHabitSubtask } = useNova();
   const router = useRouter();
   const searchParams = useSearchParams();
   const current = zonedNow(state.settings.timeZone);
@@ -277,6 +277,28 @@ export function TodayPlanner() {
     if (target) reorderTask(taskId, target.id);
   }
 
+  function taskSubtaskDone(task: Task, occurrenceDate = selectedDate) {
+    const key = task.recurrence === "none" ? "__task" : occurrenceDate;
+    return new Set(state.taskSubtaskCompletions[task.id]?.[key] ?? []);
+  }
+
+  function renderUnscheduledTask(task: Task, list: Task[]) {
+    const project = task.projectId ? projectsById.get(task.projectId) : undefined;
+    const completed = taskIsCompletedOn(task, selectedDate);
+    const overdue = Boolean(task.dueDate && task.dueDate < selectedDate && task.recurrence === "none");
+    const done = taskSubtaskDone(task);
+    return <div className="task-item-stack" key={task.id}>
+      <article className="task-row" draggable onDragStart={() => setDraggedId(task.id)} onDragEnd={() => setDraggedId(null)} onDragOver={(event) => { if (draggedId) event.preventDefault(); }} onDrop={(event) => { event.stopPropagation(); dropOnTask(task.id); }}>
+        <span className="drag-handle" title="Drag to reorder or schedule">⋮⋮</span>
+        <button className={`checkbox ${completed ? "checked" : ""}`} onClick={() => toggleTask(task.id, selectedDate)} aria-label={`Complete ${task.title}`}>{completed ? "✓" : ""}</button>
+        <button className="task-copy" onClick={() => setTaskModal({ open: true, task })}><span className={completed ? "task-title complete" : "task-title"}>{task.title}</span><small>{project?.name}{project && overdue ? " · " : ""}{overdue ? "Overdue" : ""}{task.recurrence !== "none" ? `${project || overdue ? " · " : ""}↻ ${recurringLabel(task)}` : ""}{(task.subtasks ?? []).length ? `${project || overdue || task.recurrence !== "none" ? " · " : ""}${done.size}/${task.subtasks!.length} subtasks` : ""}</small></button>
+        <span className="task-order-mobile"><button type="button" disabled={list[0]?.id === task.id} onClick={() => moveInUnscheduled(task.id, list, -1)}>↑</button><button type="button" disabled={list[list.length - 1]?.id === task.id} onClick={() => moveInUnscheduled(task.id, list, 1)}>↓</button></span>
+        {task.location && <a className="micro-badge" title={task.location} href={googleMapsUrl(task.location)} target="_blank" rel="noreferrer">⌖</a>}
+      </article>
+      {(task.subtasks ?? []).length > 0 && <div className="task-subtasks-inline">{task.subtasks!.map((subtask) => { const checked = done.has(subtask.id); return <button key={subtask.id} className={checked ? "task-subtask-inline done" : "task-subtask-inline"} onClick={() => toggleTaskSubtask(task.id, subtask.id, selectedDate)}><span>{checked ? "✓" : ""}</span><small>{subtask.title}</small></button>; })}</div>}
+    </div>;
+  }
+
   return (
     <>
       <header className="page-header">
@@ -298,13 +320,8 @@ export function TodayPlanner() {
             <div className="panel-heading" onDragOver={(event) => { if (draggedTask?.scheduledTime) event.preventDefault(); }} onDrop={unscheduleDragged}><div><h2>Unscheduled</h2><span className="count-pill">{unscheduledTasks.length}</span></div><button className="text-button" onClick={() => setTaskModal({ open: true })}>＋ Add task</button></div>
             {draggedTask?.scheduledTime && <div className="unschedule-drop-hint" onDragOver={(event) => event.preventDefault()} onDrop={unscheduleDragged}>Drop here to move back to unscheduled</div>}
             {unscheduledTasks.length === 0 ? <p className="empty-state" onDragOver={(event) => { if (draggedId) event.preventDefault(); }} onDrop={unscheduleDragged}>Nothing waiting here. Your day has breathing room. ✦</p> : <div className="task-groups">
-              {grouped.map(({ category, tasks }) => <div className="task-group" key={category.id}><div className="task-group-heading"><span className="color-dot" style={{ background: category.color }} />{category.name}<small>{tasks.length}</small></div>{tasks.map((task) => {
-                const project = task.projectId ? projectsById.get(task.projectId) : undefined;
-                const completed = taskIsCompletedOn(task, selectedDate);
-                const overdue = Boolean(task.dueDate && task.dueDate < selectedDate && task.recurrence === "none");
-                return <article key={task.id} className="task-row" draggable onDragStart={() => setDraggedId(task.id)} onDragEnd={() => setDraggedId(null)} onDragOver={(event) => { if (draggedId) event.preventDefault(); }} onDrop={(event) => { event.stopPropagation(); dropOnTask(task.id); }}><span className="drag-handle" title="Drag to reorder or schedule">⋮⋮</span><button className={`checkbox ${completed ? "checked" : ""}`} onClick={() => toggleTask(task.id, selectedDate)} aria-label={`Complete ${task.title}`}>{completed ? "✓" : ""}</button><button className="task-copy" onClick={() => setTaskModal({ open: true, task })}><span className={completed ? "task-title complete" : "task-title"}>{task.title}</span><small>{project?.name}{project && overdue ? " · " : ""}{overdue ? "Overdue" : ""}{task.recurrence !== "none" ? `${project || overdue ? " · " : ""}↻ ${recurringLabel(task)}` : ""}</small></button><span className="task-order-mobile"><button type="button" disabled={tasks[0]?.id === task.id} onClick={() => moveInUnscheduled(task.id, tasks, -1)}>↑</button><button type="button" disabled={tasks[tasks.length - 1]?.id === task.id} onClick={() => moveInUnscheduled(task.id, tasks, 1)}>↓</button></span>{task.location && <a className="micro-badge" title={task.location} href={googleMapsUrl(task.location)} target="_blank" rel="noreferrer">⌖</a>}</article>;
-              })}</div>)}
-              {uncategorized.length > 0 && <div className="task-group"><div className="task-group-heading">Other<small>{uncategorized.length}</small></div>{uncategorized.map((task) => { const completed = taskIsCompletedOn(task, selectedDate); return <article key={task.id} className="task-row" draggable onDragStart={() => setDraggedId(task.id)} onDragEnd={() => setDraggedId(null)} onDragOver={(event) => { if (draggedId) event.preventDefault(); }} onDrop={(event) => { event.stopPropagation(); dropOnTask(task.id); }}><span className="drag-handle">⋮⋮</span><button className={`checkbox ${completed ? "checked" : ""}`} onClick={() => toggleTask(task.id, selectedDate)}>{completed ? "✓" : ""}</button><button className="task-copy" onClick={() => setTaskModal({ open: true, task })}><span className={completed ? "task-title complete" : "task-title"}>{task.title}</span></button><span className="task-order-mobile"><button type="button" disabled={uncategorized[0]?.id === task.id} onClick={() => moveInUnscheduled(task.id, uncategorized, -1)}>↑</button><button type="button" disabled={uncategorized[uncategorized.length - 1]?.id === task.id} onClick={() => moveInUnscheduled(task.id, uncategorized, 1)}>↓</button></span></article>; })}</div>}
+              {grouped.map(({ category, tasks }) => <div className="task-group" key={category.id}><div className="task-group-heading"><span className="color-dot" style={{ background: category.color }} />{category.name}<small>{tasks.length}</small></div>{tasks.map((task) => renderUnscheduledTask(task, tasks))}</div>)}
+              {uncategorized.length > 0 && <div className="task-group"><div className="task-group-heading">Other<small>{uncategorized.length}</small></div>{uncategorized.map((task) => renderUnscheduledTask(task, uncategorized))}</div>}
             </div>}
           </div>
 
@@ -340,10 +357,11 @@ export function TodayPlanner() {
                 const category = task.categoryId ? categoriesById.get(task.categoryId) : undefined;
                 const visualDuration = task.durationMinutes ?? 30;
                 const past = isPast(task.scheduledTime, task.durationMinutes, occurrenceDate);
+                const subtaskDone = taskSubtaskDone(task, occurrenceDate);
                 return <article className={`timeline-positioned task-event positioned-event ${past && !completed ? "past-event" : ""}`} draggable key={`${task.id}-${occurrenceDate}`} onDragStart={(event) => { event.stopPropagation(); setDraggedId(task.id); }} onDragEnd={() => setDraggedId(null)} onClick={() => setTaskModal({ open: true, task, occurrenceDate })} style={{ ...timelineStyle(task.scheduledTime, visualDuration, occurrenceDate), "--event-color": category?.color ?? "#B29CE4" } as React.CSSProperties}>
                   <button className="event-check" onClick={(event) => { event.stopPropagation(); toggleTask(task.id, occurrenceDate); }}>{completed ? "✓" : "○"}</button>
                   <span className="event-copy"><strong className={completed || past ? "complete" : ""}>{task.title}</strong><small>{timeRangeLabel(task.scheduledTime, task.durationMinutes)}{task.travelTimeMinutes ? ` · ${task.travelTimeMinutes} min travel` : ""}</small></span>
-                  <span className="event-right-meta"><span className="event-duration">{durationLabel(task.durationMinutes)}</span>{task.location && <a href={googleMapsUrl(task.location)} target="_blank" rel="noreferrer" onClick={(event) => event.stopPropagation()}>⌖ {task.location} ↗</a>}{task.notes && <span>Notes</span>}</span>
+                  <span className="event-right-meta"><span className="event-duration">{durationLabel(task.durationMinutes)}</span>{(task.subtasks ?? []).length > 0 && <span>{subtaskDone.size}/{task.subtasks!.length} subtasks</span>}{task.location && <a href={googleMapsUrl(task.location)} target="_blank" rel="noreferrer" onClick={(event) => event.stopPropagation()}>⌖ {task.location} ↗</a>}{task.notes && <span>Notes</span>}</span>
                 </article>;
               })}
 

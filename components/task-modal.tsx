@@ -3,7 +3,7 @@
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import { addDays, dateKey, durationInputParts, durationToMinutes, googleMapsUrl, parseDateKey, type DurationUnit } from "@/lib/nova/date";
 import { useNova } from "./nova-provider";
-import type { Recurrence, Task, TaskStatus } from "@/lib/nova/types";
+import type { Recurrence, Task, TaskStatus, TaskSubtask } from "@/lib/nova/types";
 
 const weekdays = [
   [0, "Sun"], [1, "Mon"], [2, "Tue"], [3, "Wed"], [4, "Thu"], [5, "Fri"], [6, "Sat"],
@@ -33,6 +33,9 @@ export function TaskModal({
   const [deletePrompt, setDeletePrompt] = useState(false);
   const [selectedProjectId, setSelectedProjectId] = useState(task?.projectId ?? defaultProjectId ?? "");
   const [location, setLocation] = useState(task?.location ?? "");
+  const [dueDate, setDueDate] = useState(task?.dueDate ?? defaultDate ?? "");
+  const [subtasks, setSubtasks] = useState<TaskSubtask[]>(task?.subtasks ?? []);
+  const [newSubtask, setNewSubtask] = useState("");
   const initialDuration = durationInputParts(task?.durationMinutes);
   const [durationValue, setDurationValue] = useState(initialDuration.value);
   const [durationUnit, setDurationUnit] = useState<DurationUnit>(initialDuration.unit);
@@ -47,6 +50,9 @@ export function TaskModal({
     setDeletePrompt(false);
     setSelectedProjectId(task?.projectId ?? defaultProjectId ?? "");
     setLocation(task?.location ?? "");
+    setDueDate(task?.dueDate ?? defaultDate ?? "");
+    setSubtasks(task?.subtasks ?? []);
+    setNewSubtask("");
     const duration = durationInputParts(task?.durationMinutes);
     setDurationValue(duration.value);
     setDurationUnit(duration.unit);
@@ -82,8 +88,10 @@ export function TaskModal({
     else if (task?.status === "completed") status = "completed";
     else status = "todo";
 
-    let dueDate = String(data.get("dueDate") || "") || undefined;
-    if (recurrence !== "none" && !dueDate) dueDate = defaultDate ?? dateKey();
+    let savedDueDate = dueDate || undefined;
+    // Only project tasks may stay undated. Standalone tasks need a day so they remain reachable from Today.
+    if (!projectId && !savedDueDate) savedDueDate = defaultDate ?? dateKey();
+    if (recurrence !== "none" && !savedDueDate) savedDueDate = defaultDate ?? dateKey();
     const scheduledTime = String(data.get("scheduledTime") || "") || undefined;
     const reminderRaw = String(data.get("reminderMinutes") || "");
     const travelRaw = String(data.get("travelTimeMinutes") || "");
@@ -94,10 +102,11 @@ export function TaskModal({
     const payload = {
       title,
       notes: String(data.get("notes") || "").trim() || undefined,
+      subtasks: subtasks.filter((item) => item.title.trim()).map((item) => ({ ...item, title: item.title.trim() })),
       categoryId: String(data.get("categoryId") || "") || undefined,
       projectId,
       status,
-      dueDate,
+      dueDate: savedDueDate,
       scheduledTime,
       durationMinutes,
       recurrence,
@@ -115,6 +124,13 @@ export function TaskModal({
     if (task) updateTask(task.id, payload);
     else addTask(payload);
     onClose();
+  }
+
+  function addSubtask() {
+    const title = newSubtask.trim();
+    if (!title) return;
+    setSubtasks((current) => [...current, { id: crypto.randomUUID(), title }]);
+    setNewSubtask("");
   }
 
   function toggleRecurrenceDay(day: number) {
@@ -156,7 +172,7 @@ export function TaskModal({
   function duplicateCurrentTask() {
     if (!task) return;
     const { id: _id, createdAt: _createdAt, updatedAt: _updatedAt, completedAt: _completedAt, completedDates: _completedDates, order: _order, ...copy } = task;
-    addTask({ ...copy, status: task.projectId ? "todo" : "todo", completedAt: undefined, completedDates: [] });
+    addTask({ ...copy, subtasks: (copy.subtasks ?? []).map((item) => ({ ...item, id: crypto.randomUUID() })), status: "todo", completedAt: undefined, completedDates: [] });
     onClose();
   }
 
@@ -171,7 +187,7 @@ export function TaskModal({
         <label className="field full-field"><span>What do you need to do?</span><input name="title" autoFocus defaultValue={initial.title} placeholder="e.g. Finish report" required /></label>
 
         <div className="form-grid two">
-          <label className="field"><span>Date</span><input name="dueDate" type="date" defaultValue={initial.dueDate} /></label>
+          <label className="field"><span>Date</span><div className="date-input-row"><input name="dueDate" type="date" value={dueDate} onChange={(event) => setDueDate(event.target.value)} />{selectedProjectId && <button type="button" className={dueDate ? "tiny-button" : "tiny-button active"} onClick={() => setDueDate("")}>Undated</button>}</div>{selectedProjectId && !dueDate && recurrence === "none" && <small className="field-help">This task will stay in the project backlog and will not appear on Today until you add a date.</small>}</label>
           <label className="field"><span>Time</span><input name="scheduledTime" type="time" defaultValue={initial.scheduledTime} /></label>
           <label className="field"><span>Category</span><select name="categoryId" defaultValue={initial.categoryId}><option value="">No category</option>{state.categories.map((category) => <option key={category.id} value={category.id}>{category.name}</option>)}</select></label>
           <label className="field"><span>Project</span><select name="projectId" value={selectedProjectId} onChange={(event) => setSelectedProjectId(event.target.value)}><option value="">No project</option>{state.projects.filter((project) => project.status === "active").map((project) => <option key={project.id} value={project.id}>{project.name}</option>)}</select></label>
@@ -193,6 +209,11 @@ export function TaskModal({
             <div className="form-grid two advanced-second-row">
               <label className="field"><span>Location</span><div className="location-input-row"><input name="location" value={location} onChange={(event) => setLocation(event.target.value)} placeholder="Optional address or place" />{location.trim() && <a className="map-link-button" href={googleMapsUrl(location.trim())} target="_blank" rel="noreferrer">Maps ↗</a>}</div></label>
               <label className="field"><span>Travel time</span><select name="travelTimeMinutes" defaultValue={initial.travelTimeMinutes ? String(initial.travelTimeMinutes) : ""}><option value="">None</option><option value="10">10 minutes</option><option value="15">15 minutes</option><option value="20">20 minutes</option><option value="30">30 minutes</option><option value="45">45 minutes</option><option value="60">1 hour</option></select></label>
+            </div>
+            <div className="task-subtask-editor">
+              <div className="task-subtask-heading"><div><span className="eyebrow">SUBTASKS</span><strong>Checklist</strong></div><small>{subtasks.length} item{subtasks.length === 1 ? "" : "s"}</small></div>
+              {subtasks.map((subtask, index) => <div className="task-subtask-edit-row" key={subtask.id}><span>{index + 1}</span><input value={subtask.title} onChange={(event) => setSubtasks((items) => items.map((item) => item.id === subtask.id ? { ...item, title: event.target.value } : item))} /><button type="button" className="icon-control" onClick={() => setSubtasks((items) => items.filter((item) => item.id !== subtask.id))}>×</button></div>)}
+              <div className="task-subtask-add-row"><input value={newSubtask} onChange={(event) => setNewSubtask(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); addSubtask(); } }} placeholder="Add a subtask" /><button type="button" className="soft-button" onClick={addSubtask}>Add</button></div>
             </div>
             <label className="field full-field"><span>Notes</span><textarea name="notes" defaultValue={initial.notes} rows={4} placeholder="Anything you want to remember…" /></label>
           </div>
